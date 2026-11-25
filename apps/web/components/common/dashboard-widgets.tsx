@@ -23,7 +23,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { categoryMix, weeklyVolume } from "@/lib/mock-data";
+import { useSlaRisks } from "@/lib/use-sla-risks";
 
 export function StatCard({
   label,
@@ -93,12 +93,13 @@ export function Panel({
   );
 }
 
-export function VolumeChart({ type = "area" }: { type?: "area" | "bar" }) {
+export function VolumeChart({ type = "area", data }: { type?: "area" | "bar"; data?: Array<{ day: string; opened: number; resolved: number }> }) {
+  if (!data) return <p className="grid h-[235px] place-items-center text-center text-xs text-slate-500">Time-series data is not provided by the current analytics API.</p>;
   return (
     <div className="h-[235px] w-full">
       <ResponsiveContainer width="100%" height="100%">
         {type === "bar" ? (
-          <BarChart data={weeklyVolume} barGap={5}>
+          <BarChart data={data} barGap={5}>
             <CartesianGrid vertical={false} stroke="#eef1f6" />
             <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{ fill: "#91a0b4", fontSize: 11 }} />
             <YAxis axisLine={false} tickLine={false} tick={{ fill: "#91a0b4", fontSize: 11 }} width={26} />
@@ -107,7 +108,7 @@ export function VolumeChart({ type = "area" }: { type?: "area" | "bar" }) {
             <Bar dataKey="resolved" fill="#21bba5" radius={[4, 4, 0, 0]} />
           </BarChart>
         ) : (
-          <AreaChart data={weeklyVolume}>
+          <AreaChart data={data}>
             <defs>
               <linearGradient id="openedFill" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stopColor="#4968f5" stopOpacity={0.19} />
@@ -131,24 +132,28 @@ export function VolumeChart({ type = "area" }: { type?: "area" | "bar" }) {
   );
 }
 
-export function CategoryChart() {
+export function CategoryChart({ data }: { data?: Array<{ name: string; value: number }> }) {
+  if (!data?.length) return <p className="grid h-[180px] place-items-center text-center text-xs text-slate-500">No category analytics are available for this period.</p>;
+  const colors = ["#4968f5", "#20bba5", "#8f78ec", "#f2ae57", "#d8dfe9"];
+  const total = data.reduce((sum, item) => sum + item.value, 0);
+  const chartData = data.map((item, index) => ({ ...item, color: colors[index % colors.length] }));
   return (
     <div className="flex flex-col items-center gap-3 sm:flex-row">
       <div className="h-[180px] w-full max-w-[190px]">
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
-            <Pie data={categoryMix} dataKey="value" innerRadius={53} outerRadius={78} paddingAngle={4} stroke="none">
-              {categoryMix.map((entry) => <Cell key={entry.name} fill={entry.color} />)}
+            <Pie data={chartData} dataKey="value" innerRadius={53} outerRadius={78} paddingAngle={4} stroke="none">
+              {chartData.map((entry) => <Cell key={entry.name} fill={entry.color} />)}
             </Pie>
             <Tooltip />
           </PieChart>
         </ResponsiveContainer>
       </div>
       <div className="w-full space-y-3">
-        {categoryMix.map((item) => (
+        {chartData.map((item) => (
           <div className="flex items-center justify-between gap-2 text-xs" key={item.name}>
             <span className="flex items-center gap-2 text-slate-600"><i className="h-2 w-2 rounded-full" style={{ backgroundColor: item.color }} />{item.name}</span>
-            <span className="font-semibold text-slate-800">{item.value}%</span>
+            <span className="font-semibold text-slate-800">{total ? Math.round((item.value / total) * 100) : 0}%</span>
           </div>
         ))}
       </div>
@@ -157,6 +162,12 @@ export function CategoryChart() {
 }
 
 export function RiskCard({ compact = false }: { compact?: boolean }) {
+  const { risks, loading, error } = useSlaRisks();
+  const topRisk = risks[0];
+  const countdown = topRisk && topRisk.remainingMs > 0
+    ? [Math.floor(topRisk.remainingMs / 3_600_000), Math.floor((topRisk.remainingMs % 3_600_000) / 60_000), Math.floor((topRisk.remainingMs % 60_000) / 1000)]
+      .map((part) => String(part).padStart(2, "0")).join(":")
+    : "Breached";
   return (
     <div className={`overflow-hidden rounded-2xl border border-rose-100 bg-white ${compact ? "" : "shadow-sm"}`}>
       <div className="flex items-center justify-between bg-gradient-to-r from-[#fff5f4] to-[#fffaf5] px-4 py-3">
@@ -164,16 +175,16 @@ export function RiskCard({ compact = false }: { compact?: boolean }) {
           <span className="relative grid h-8 w-8 place-items-center rounded-lg bg-rose-100 text-rose-600"><Clock3 size={16} /><span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 animate-pulse rounded-full bg-rose-500 ring-2 ring-white" /></span>
           <div><p className="text-xs font-bold text-slate-800">SLA Rescue Radar</p><p className="text-[10px] text-slate-500">Proactive deadline protection</p></div>
         </div>
-        <span className="rounded-full bg-rose-100 px-2.5 py-1 text-[9px] font-extrabold tracking-wider text-rose-700">2 AT RISK</span>
+        <span className="rounded-full bg-rose-100 px-2.5 py-1 text-[9px] font-extrabold tracking-wider text-rose-700">{loading ? "LOADING" : `${risks.filter((risk) => risk.level === "HIGH" || risk.level === "CRITICAL").length} AT RISK`}</span>
       </div>
-      <div className="space-y-3 p-4">
+      {error ? <p role="alert" className="p-4 text-xs text-rose-700">{error}</p> : !topRisk ? <p className="p-4 text-xs text-slate-500">{loading ? "Loading API risk data…" : "No active SLA risks were returned."}</p> : <div className="space-y-3 p-4">
         <div className="flex items-center justify-between gap-2">
-          <div><p className="text-xs font-semibold text-slate-800">SVX-2841 <span className="font-normal text-slate-500">· Location not updating</span></p><p className="mt-1 text-[10px] text-slate-500">Maya Chen · Fleet tracking</p></div>
-          <div className="text-right"><p className="font-mono text-sm font-bold text-rose-600">00:18:42</p><p className="text-[9px] font-bold text-rose-500">CRITICAL</p></div>
+          <div><p className="text-xs font-semibold text-slate-800">{topRisk.ticketCode} <span className="font-normal text-slate-500">· {topRisk.subject ?? "Ticket"}</span></p><p className="mt-1 text-[10px] text-slate-500">Deadline {new Date(topRisk.deadline).toLocaleString()}</p></div>
+          <div className="text-right"><p className="font-mono text-sm font-bold text-rose-600">{countdown}</p><p className="text-[9px] font-bold text-rose-500">{topRisk.level}</p></div>
         </div>
-        <div className="h-1.5 overflow-hidden rounded-full bg-slate-100"><div className="h-full w-[88%] rounded-full bg-gradient-to-r from-amber-400 to-rose-500" /></div>
-        <p className="rounded-lg bg-amber-50 px-3 py-2 text-[10px] leading-relaxed text-amber-800">Recommended: Reassign to a fleet specialist to protect the response SLA.</p>
-      </div>
+        <div className="h-1.5 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-gradient-to-r from-amber-400 to-rose-500" style={{ width: `${topRisk.score}%` }} /></div>
+        <p className="rounded-lg bg-amber-50 px-3 py-2 text-[10px] leading-relaxed text-amber-800">{topRisk.recommendedAction}</p>
+      </div>}
     </div>
   );
 }

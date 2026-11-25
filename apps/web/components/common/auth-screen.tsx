@@ -1,14 +1,17 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { Activity, ArrowLeft, ArrowRight, Eye, EyeOff, ShieldCheck } from "lucide-react";
 import { FormInput } from "@/components/ui/primitives";
+import { apiJson, errorMessage, roleHome, type ApiRole, type ApiUser } from "@/lib/api";
 
 type AuthRole = "customer" | "agent" | "admin";
 type AuthMode = "login" | "register";
 
 export function AuthScreen({ role = "customer", mode = "login" }: { role?: AuthRole; mode?: AuthMode }) {
+  const router = useRouter();
   const [view, setView] = useState<"form" | "forgot">("form");
   const [visible, setVisible] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -18,15 +21,36 @@ export function AuthScreen({ role = "customer", mode = "login" }: { role?: AuthR
   const title = view === "forgot" ? "Reset your password" : mode === "register" ? "Create your account" : role === "customer" ? "Welcome back" : role === "agent" ? "Agent sign in" : "Admin sign in";
   const workspace = role === "customer" ? "/customer" : `/${role}`;
 
-  function submit(event: FormEvent<HTMLFormElement>) {
+  async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
     setMessage("");
+    if (view === "forgot") {
+      setMessage("Password reset is not available yet. Contact your SOLVEX administrator.");
+      return;
+    }
+
+    const formData = new FormData(event.currentTarget);
     setLoading(true);
-    window.setTimeout(() => {
+    try {
+      const path = mode === "register"
+        ? "/auth/register"
+        : `/auth/${role === "customer" ? "customer" : role}/login`;
+      const input = {
+        email: String(formData.get("email") ?? ""),
+        password: String(formData.get("password") ?? ""),
+        ...(mode === "register" ? { fullName: String(formData.get("fullName") ?? "") } : {}),
+      };
+      const result = await apiJson<{ user: ApiUser }>(path, "POST", input);
+      const expectedRole: ApiRole = role === "customer" ? "CUSTOMER" : role === "agent" ? "AGENT" : "ADMIN";
+      if (result.user.role !== expectedRole) {
+        throw new Error("The signed-in account does not have access to this workspace.");
+      }
+      router.replace(roleHome(result.user.role));
+    } catch (requestError) {
+      setError(errorMessage(requestError));
       setLoading(false);
-      setMessage(view === "forgot" ? "If this email belongs to an account, password reset instructions are on their way." : "This is a frontend demo. Continue to explore the sample workspace.");
-    }, 650);
+    }
   }
 
   return (
@@ -47,10 +71,10 @@ export function AuthScreen({ role = "customer", mode = "login" }: { role?: AuthR
           {error && <div role="alert" className="mt-5 rounded-lg border border-rose-100 bg-rose-50 px-3 py-2.5 text-xs text-rose-700">{error}</div>}
           {message && <div role="status" className="mt-5 rounded-lg border border-teal-100 bg-teal-50 px-3 py-2.5 text-xs leading-relaxed text-teal-800">{message}{view === "form" && <div className="mt-2"><Link className="font-bold underline" href={workspace}>Continue to sample {role} workspace →</Link></div>}</div>}
           <form onSubmit={submit} className="mt-6 space-y-4">
-            {mode === "register" && view === "form" && <FormInput label="Full name" required minLength={2} placeholder="Your name" />}
-            <FormInput label="Email address" required type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@company.com" />
-            {view === "form" && <label className="block text-[10px] font-semibold text-slate-700">Password<div className="relative"><input required minLength={mode === "register" ? 8 : 1} type={visible ? "text" : "password"} autoComplete={mode === "register" ? "new-password" : "current-password"} placeholder={mode === "register" ? "At least 8 characters" : "Enter your password"} className={`${authInput} pr-10`} /><button type="button" onClick={() => setVisible(!visible)} aria-label={visible ? "Hide password" : "Show password"} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700">{visible ? <EyeOff size={15} /> : <Eye size={15} />}</button></div></label>}
-            {mode === "register" && view === "form" && <label className="flex items-start gap-2 text-[10px] leading-relaxed text-slate-500"><input type="checkbox" required className="mt-0.5 h-3.5 w-3.5 accent-blue-600" />I agree to the terms and understand this is a frontend demo.</label>}
+            {mode === "register" && view === "form" && <FormInput label="Full name" name="fullName" required minLength={2} placeholder="Your name" />}
+            <FormInput label="Email address" name="email" required type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@company.com" />
+            {view === "form" && <label className="block text-[10px] font-semibold text-slate-700">Password<div className="relative"><input name="password" required minLength={mode === "register" ? 12 : 1} type={visible ? "text" : "password"} autoComplete={mode === "register" ? "new-password" : "current-password"} placeholder={mode === "register" ? "At least 12 characters" : "Enter your password"} className={`${authInput} pr-10`} /><button type="button" onClick={() => setVisible(!visible)} aria-label={visible ? "Hide password" : "Show password"} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700">{visible ? <EyeOff size={15} /> : <Eye size={15} />}</button></div></label>}
+            {mode === "register" && view === "form" && <label className="flex items-start gap-2 text-[10px] leading-relaxed text-slate-500"><input type="checkbox" required className="mt-0.5 h-3.5 w-3.5 accent-blue-600" />I understand this account is for customer access.</label>}
             {role === "admin" && mode === "login" && view === "form" && <div className="rounded-lg border border-amber-100 bg-amber-50 px-3 py-2.5 text-[10px] leading-relaxed text-amber-800">Admin accounts are provisioned privately. Public admin registration is not available.</div>}
             <button disabled={loading} className="flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-blue-600 text-xs font-bold text-white transition hover:bg-blue-700 disabled:cursor-wait disabled:opacity-70">{loading ? <><span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />{view === "forgot" ? "Sending…" : "Please wait…"}</> : <>{view === "forgot" ? "Send reset instructions" : mode === "register" ? "Create customer account" : "Sign in"} <ArrowRight size={14} /></>}</button>
           </form>
@@ -59,7 +83,7 @@ export function AuthScreen({ role = "customer", mode = "login" }: { role?: AuthR
           {role === "customer" && view === "form" && <p className="mt-7 border-t border-slate-100 pt-5 text-center text-[10px] text-slate-500">{mode === "register" ? "Already have an account?" : "New to SOLVEX?"} <Link href={mode === "register" ? "/login" : "/register"} className="font-bold text-blue-600 hover:underline">{mode === "register" ? "Sign in" : "Create an account"}</Link></p>}
           {role !== "customer" && <p className="mt-7 border-t border-slate-100 pt-5 text-center text-[10px] text-slate-500">Need access? Contact your SOLVEX administrator.</p>}
           {role === "customer" && <div className="mt-6 flex justify-center gap-4 text-[9px] text-slate-400"><Link href="/agent/login" className="hover:text-blue-600">Agent sign in</Link><Link href="/admin/login" className="hover:text-blue-600">Admin sign in</Link></div>}
-          <p className="mt-8 text-center text-[9px] leading-relaxed text-slate-400">Frontend demonstration only. Authentication and account data are not connected to a backend.</p>
+          <p className="mt-8 text-center text-[9px] leading-relaxed text-slate-400">Sessions use secure HTTP-only cookies. Passwords are sent only to the API over this local connection.</p>
         </div>
         <p className="pb-2 text-center text-[9px] text-slate-400">© 2026 SOLVEX · Hackhive · AVISHKAR&apos;26</p>
       </section>

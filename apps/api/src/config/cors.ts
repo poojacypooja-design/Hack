@@ -2,7 +2,7 @@ import type { CorsOptions } from "cors";
 import { env } from "./env.js";
 import { ApiError } from "../utils/api-response.js";
 
-export const allowedWebOrigin = env.WEB_ORIGIN.replace(/\/+$/, "");
+export const allowedWebOrigin = (env.FRONTEND_URL ?? env.WEB_ORIGIN).replace(/\/+$/, "");
 
 export const corsOptions: CorsOptions = {
   origin(origin, callback) {

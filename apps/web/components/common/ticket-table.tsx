@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { ArrowDownUp, ChevronDown } from "lucide-react";
-import { demoTickets } from "@/lib/mock-data";
+import { demoTickets, type Ticket } from "@/lib/mock-data";
 import { FilterPanel, SearchBar } from "@/components/ui/primitives";
 
 export function TicketTable({
@@ -11,26 +11,30 @@ export function TicketTable({
   compact = false,
   initialStatus = "All statuses",
   hrefPrefix = "/customer/tickets",
+  tickets: liveTickets,
+  total,
 }: {
   mode?: "default" | "mine" | "unassigned" | "customer";
   compact?: boolean;
   initialStatus?: string;
   hrefPrefix?: string;
+  tickets?: Ticket[];
+  total?: number;
 }) {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState(initialStatus);
   const [priority, setPriority] = useState("All priorities");
   const [sortNewest, setSortNewest] = useState(true);
   const tickets = useMemo(() => {
-    return demoTickets
+    return (liveTickets ?? demoTickets)
       .filter((ticket) => mode !== "unassigned" || ticket.agent === "Unassigned")
       .filter((ticket) => mode !== "mine" || ticket.agent !== "Unassigned")
-      .filter((ticket) => mode !== "customer" || ticket.customer === "Aarav Mehta")
       .filter((ticket) => `${ticket.id} ${ticket.subject} ${ticket.customer} ${ticket.category}`.toLowerCase().includes(query.toLowerCase()))
       .filter((ticket) => status === "All statuses" || ticket.status === status)
       .filter((ticket) => priority === "All priorities" || ticket.priority === priority)
       .sort((a, b) => sortNewest ? a.id.localeCompare(b.id) * -1 : a.id.localeCompare(b.id));
-  }, [mode, priority, query, sortNewest, status]);
+  }, [liveTickets, mode, priority, query, sortNewest, status]);
+  const isLive = liveTickets !== undefined;
   return (
     <div>
       {!compact && <div className="mb-4"><FilterPanel>
@@ -45,7 +49,7 @@ export function TicketTable({
           </tr></thead>
           <tbody>{tickets.map((ticket) => (
             <tr key={ticket.id} className="border-b border-slate-50 transition hover:bg-slate-50/80">
-              <td className="px-3 py-3.5"><Link href={`${hrefPrefix}/${ticket.id}`} className="block"><p className="text-[11px] font-bold text-blue-600">{ticket.id}</p><p className="mt-1 max-w-[230px] truncate text-xs font-semibold text-slate-800">{ticket.subject}</p></Link></td>
+              <td className="px-3 py-3.5"><Link href={`${hrefPrefix}/${ticket.id}`} className="block"><p className="text-[11px] font-bold text-blue-600">{ticket.ticketCode ?? ticket.id}</p><p className="mt-1 max-w-[230px] truncate text-xs font-semibold text-slate-800">{ticket.subject}</p></Link></td>
               <td className="px-3 py-3.5"><p className="text-xs font-medium text-slate-700">{ticket.customer}</p><p className="mt-1 text-[10px] text-slate-400">{ticket.category}</p></td>
               <td className="px-3 py-3.5"><PriorityBadge priority={ticket.priority} /></td>
               <td className="px-3 py-3.5"><StatusBadge status={ticket.status} /></td>
@@ -57,7 +61,7 @@ export function TicketTable({
         </table>
         {tickets.length === 0 && <p className="py-12 text-center text-sm text-slate-500">No tickets match those filters.</p>}
       </div>
-      {!compact && <div className="flex items-center justify-between pt-4 text-[10px] text-slate-400"><span>Showing {tickets.length} of 128 sample tickets</span><span className="rounded-full bg-amber-50 px-2.5 py-1 font-semibold text-amber-700">Demo data</span></div>}
+      {!compact && <div className="flex items-center justify-between pt-4 text-[10px] text-slate-400"><span>{isLive ? `Showing ${tickets.length} of ${total ?? tickets.length} tickets` : `Showing ${tickets.length} sample tickets`}</span>{!isLive && <span className="rounded-full bg-amber-50 px-2.5 py-1 font-semibold text-amber-700">Demo data</span>}</div>}
     </div>
   );
 }

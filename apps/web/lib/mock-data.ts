@@ -4,10 +4,11 @@ export type Ticket = {
   customer: string;
   category: string;
   priority: "Critical" | "High" | "Medium" | "Low";
-  status: "Open" | "In progress" | "Waiting" | "Resolved";
+  status: "Open" | "In progress" | "Waiting" | "Resolved" | "Closed";
   agent: string;
   updated: string;
   sla: string;
+  ticketCode?: string;
 };
 
 export const demoTickets: Ticket[] = [

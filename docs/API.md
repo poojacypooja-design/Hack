@@ -4,33 +4,23 @@ The backend is an Express 5 API in `apps/api`, using TypeScript, PostgreSQL, Pri
 
 ## PostgreSQL setup
 
-Docker Compose and PostgreSQL are not installed on the current Windows machine. Install PostgreSQL using the [official Windows installer instructions](https://www.postgresql.org/download/windows/) (the PostgreSQL site links to the EDB interactive installer). In the installer:
-
-1. Select the PostgreSQL Server and Command Line Tools; pgAdmin is optional.
-2. Keep port `5432` unless another local service uses it.
-3. Set a password for the PostgreSQL administrator account (`postgres`) and finish installation.
-4. Open **SQL Shell (psql)** from the Start menu and connect to `localhost:5432` as `postgres`.
-
-Create the SOLVEX database role and database, choosing a strong local password:
-
-```sql
-CREATE ROLE solvex LOGIN PASSWORD '<choose-a-local-password>';
-CREATE DATABASE solvex OWNER solvex;
-```
-
-In PowerShell, copy the API-specific example and replace `replace-me` in `DATABASE_URL` with the password you just chose:
-
-```powershell
-Copy-Item apps\api\.env.example apps\api\.env
-```
-
-The example URL points to the same local role, database, and port:
+Start Docker Desktop, then configure the repository-root `.env` with a private local password for `POSTGRES_PASSWORD`. Set the password portion of `DATABASE_URL` to the same value; the root `.env.example` shows the expected format:
 
 ```dotenv
-DATABASE_URL=postgresql://solvex:<your-password>@localhost:5432/solvex?schema=public
+POSTGRES_PASSWORD=<your-local-password>
+DATABASE_URL=postgresql://solvex:<your-local-password>@localhost:5432/solvex?schema=public
 ```
 
-If the password contains URL-reserved characters, percent-encode them in the URL or choose a strong local password that avoids those characters. Do not commit `apps/api/.env`; `.gitignore` excludes environment files. The API and Prisma CLI load `apps/api/.env`, with the repository-root `.env` as a fallback when run from the API workspace. The root `.env.example` contains the same database URL placeholder plus the frontend variable. `DATABASE_URL` remains required; validation is not bypassed and the API does not use a fake or in-memory database.
+Do not overwrite an existing `.env` or commit it. The root `.env` is used by Docker Compose and is also a fallback for the API and Prisma CLI. If the password contains URL-reserved characters, percent-encode them in `DATABASE_URL`. `DATABASE_URL` remains required; validation is not bypassed and the API does not use a fake or in-memory database.
+
+Start and check the database from the repository root:
+
+```powershell
+docker compose up -d postgres
+docker compose ps
+```
+
+`db:generate` and Prisma schema-only commands (`validate`, `format`) do not connect to PostgreSQL. If no real URL is configured, Prisma reads the placeholder from `apps/api/.env.example` for those commands only and prints a warning. Express startup, migrations, and seeding still require a real `DATABASE_URL`.
 
 ## Initialize and run
 
@@ -38,6 +28,7 @@ From the repository root:
 
 ```powershell
 npm install
+docker compose up -d postgres
 npm run db:generate
 npm run db:deploy
 npm run db:seed
@@ -63,7 +54,7 @@ npm run db:seed
 
 ## Route groups
 
-All routes are under `/api`. Authenticated requests use the `solvex.sid` HTTP-only cookie by default; configure `SESSION_COOKIE_NAME`, `SESSION_TTL_HOURS`, and `WEB_ORIGIN` in the environment.
+All routes are under `/api`. Authenticated requests use the `solvex.sid` HTTP-only cookie by default; configure `SESSION_COOKIE_NAME`, `SESSION_TTL_HOURS`, and `FRONTEND_URL` in the environment. The API continues to accept the older `WEB_ORIGIN` setting as a fallback.
 
 | Route group | Main endpoints | Access |
 | --- | --- | --- |

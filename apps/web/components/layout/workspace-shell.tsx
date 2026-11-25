@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useRouter } from "next/navigation";
 import {
   Activity,
   Bell,
@@ -27,8 +28,10 @@ import {
   UsersRound,
   X,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { navGroups } from "@/lib/mock-data";
+import { apiRequest, errorMessage, roleHome, type ApiRole } from "@/lib/api";
+import { useSession } from "@/lib/use-session";
 
 type Role = "customer" | "agent" | "admin";
 
@@ -65,9 +68,42 @@ export function WorkspaceShell({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
   const [mobileMenu, setMobileMenu] = useState(false);
+  const [logoutError, setLogoutError] = useState("");
+  const { user, loading, error, refresh } = useSession();
   const copy = roleCopy[role];
   const nav = navGroups[role];
+  const requiredRole: ApiRole = role === "customer" ? "CUSTOMER" : role === "agent" ? "AGENT" : "ADMIN";
+
+  useEffect(() => {
+    if (loading || error) return;
+    if (!user) {
+      router.replace("/login");
+    } else if (user.role !== requiredRole) {
+      router.replace(roleHome(user.role));
+    }
+  }, [error, loading, requiredRole, router, user]);
+
+  async function logout() {
+    setLogoutError("");
+    try {
+      await apiRequest<{ message: string }>("/auth/logout", { method: "POST" });
+      router.replace("/login");
+    } catch (requestError) {
+      setLogoutError(errorMessage(requestError));
+    }
+  }
+
+  if (loading || (!user && !error) || (user && user.role !== requiredRole)) {
+    return <div className="grid min-h-screen place-items-center bg-[#f5f7fb] text-sm text-slate-500">Checking your secure session…</div>;
+  }
+
+  if (error) {
+    return <main className="grid min-h-screen place-items-center bg-[#f5f7fb] p-5"><div className="max-w-md rounded-xl border border-rose-100 bg-white p-6 text-center shadow-sm"><p role="alert" className="text-sm font-semibold text-rose-700">Could not verify your session.</p><p className="mt-2 text-xs text-slate-500">{error}</p><button onClick={() => void refresh()} className="mt-4 rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold text-white">Retry</button></div></main>;
+  }
+
+  const initials = user?.fullName.split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || copy.initials;
 
   return (
     <div className="min-h-screen bg-[#f5f7fb] lg:flex">
@@ -103,10 +139,11 @@ export function WorkspaceShell({
         </nav>
         <div className="border-t border-white/10 p-4">
           <div className="flex items-center gap-3 rounded-xl bg-white/[0.06] p-3">
-            <span className={`grid h-9 w-9 place-items-center rounded-full text-[11px] font-bold ${copy.tint}`}>{copy.initials}</span>
-            <div className="min-w-0 flex-1"><p className="truncate text-[11px] font-semibold">{copy.person}</p><p className="mt-0.5 text-[9px] text-slate-400">{role === "admin" ? "Platform administrator" : role === "agent" ? "Support specialist" : "Customer account"}</p></div>
-            <Link href="/login" title="Sign out" className="text-slate-400 hover:text-white"><LogOut size={15} /></Link>
+            <span className={`grid h-9 w-9 place-items-center rounded-full text-[11px] font-bold ${copy.tint}`}>{initials}</span>
+            <div className="min-w-0 flex-1"><p className="truncate text-[11px] font-semibold">{user?.fullName}</p><p className="mt-0.5 truncate text-[9px] text-slate-400">{user?.email}</p></div>
+            <button type="button" onClick={() => void logout()} title="Sign out" aria-label="Sign out" className="text-slate-400 hover:text-white"><LogOut size={15} /></button>
           </div>
+          {logoutError && <p role="alert" className="mt-2 text-[9px] text-rose-300">{logoutError}</p>}
           <p className="mt-4 text-center text-[9px] text-slate-500">SOLVEX demo workspace · Hackhive</p>
         </div>
       </aside>
@@ -122,7 +159,7 @@ export function WorkspaceShell({
             <label className="relative hidden md:block"><Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" /><input placeholder="Search anything…" className="h-9 w-[205px] rounded-lg border border-slate-200 bg-slate-50 pl-9 pr-3 text-[11px] outline-none focus:border-blue-300 focus:bg-white" /></label>
             <Link href={`/${role}/notifications`} aria-label="Notifications" className="relative grid h-9 w-9 place-items-center rounded-lg border border-slate-200 text-slate-500 transition hover:bg-slate-50"><Bell size={16} /><span className="absolute right-2 top-1.5 h-1.5 w-1.5 rounded-full bg-rose-500 ring-2 ring-white" /></Link>
             <div className="hidden h-8 w-px bg-slate-200 sm:block" />
-            <span className={`grid h-9 w-9 place-items-center rounded-full text-[11px] font-bold ${copy.tint}`}>{copy.initials}</span>
+            <span className={`grid h-9 w-9 place-items-center rounded-full text-[11px] font-bold ${copy.tint}`}>{initials}</span>
           </div>
         </header>
         <main className="mx-auto max-w-[1500px] px-4 py-6 sm:px-7 sm:py-8">{children}</main>
