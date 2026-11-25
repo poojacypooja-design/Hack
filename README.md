@@ -339,11 +339,15 @@ Developed by Team Hackhive | AVISHKAR'26
 
 ---
 
-## Frontend foundation
+## Project workspaces
 
-The SOLVEX frontend is available in `apps/web` as a Next.js App Router application. The customer portal, agent workspace, admin control center, authentication interfaces, SLA Rescue Radar, Issue DNA, Resolution Memory, and analytics screens use clearly labelled local sample data. No backend APIs, authentication, or database integration have been implemented yet.
+- `apps/web` — Next.js App Router frontend. The customer, agent, and admin workspaces currently use clearly labelled local sample data and are not yet connected to the API.
+- `apps/api` — Express, TypeScript, Prisma, PostgreSQL, secure cookie sessions, role authorization, ticket services, SLA monitoring, analytics, and Socket.IO.
+- `apps/api/prisma/schema.prisma` — database models; the initial SQL migration is in `apps/api/prisma/migrations`.
+- `docs/FRONTEND.md` — frontend organization and sample-data boundaries.
+- `docs/API.md` — backend setup, environment, routes, and database instructions.
 
-### Run the frontend
+## Run the frontend
 
 From the repository root:
 
@@ -354,8 +358,20 @@ npm run dev
 
 Open `http://localhost:3000`. Run `npm run build`, `npm run typecheck`, and `npm run lint` to validate the frontend.
 
-### Project workspaces
+## Run the backend
 
-- `apps/web` — Next.js, React, TypeScript, Tailwind CSS, Lucide React, and Recharts frontend.
-- `apps/api` — reserved API workspace structure only; backend implementation and Prisma schema are intentionally deferred.
-- `docs/FRONTEND.md` — frontend organization, mock-data boundaries, and workspace notes.
+1. Install and start PostgreSQL, then create a database and role for SOLVEX.
+2. Copy `apps/api/.env.example` to `apps/api/.env` and set `DATABASE_URL` (and optionally the seed admin variables).
+3. From the repository root run:
+
+```bash
+npm install
+npm run db:generate
+npm run db:deploy
+npm run db:seed
+npm run dev:api
+```
+
+The API listens on `http://localhost:4000`; `GET /api/health` reports database connectivity. For local schema iteration, use `npm run db:migrate` instead of `npm run db:deploy`. The backend requires a reachable PostgreSQL instance; it does not fabricate database responses or automatically create credentials.
+
+Use `npm run typecheck:api` and `npm run build:api` to validate/build the API. More detailed setup and route information is in [docs/API.md](./docs/API.md).

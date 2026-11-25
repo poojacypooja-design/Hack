@@ -11,6 +11,25 @@
     "build": "npm run build --workspace @solvex/web",
     "lint": "npm run lint --workspace @solvex/web",
     "typecheck": "npm run typecheck --workspace @solvex/web",
-    "dev:web": "npm run dev --workspace @solvex/web"
+    "dev:web": "npm run dev --workspace @solvex/web",
+    "dev:api": "npm run dev --workspace @solvex/api",
+    "build:api": "npm run build --workspace @solvex/api",
+    "typecheck:api": "npm run typecheck --workspace @solvex/api",
+    "test:api": "npm run test --workspace @solvex/api",
+    "db:generate": "npm run db:generate --workspace @solvex/api",
+    "db:migrate": "npm run db:migrate --workspace @solvex/api",
+    "db:deploy": "npm run db:deploy --workspace @solvex/api",
+    "db:seed": "npm run db:seed --workspace @solvex/api"
+  },
+  "overrides": {
+    "deepmerge-ts": "^8.0.2",
+    "effect": "^3.22.1"
+  },
+  "allowScripts": {
+    "@prisma/client@6.19.0": true,
+    "@prisma/engines@6.19.0": true,
+    "bcrypt@6.0.0": true,
+    "esbuild@0.28.2": true,
+    "prisma@6.19.0": true
   }
 }

@@ -2,9 +2,47 @@
   "name": "@solvex/api",
   "version": "1.0.0",
   "private": true,
-  "description": "SOLVEX API workspace placeholder. Backend implementation is planned for a later phase.",
+  "description": "SOLVEX REST API and real-time support services.",
+  "type": "module",
+  "engines": {
+    "node": ">=20.19"
+  },
   "scripts": {
-    "dev": "node -e \"console.log('SOLVEX API is not implemented yet.')\"",
-    "build": "node -e \"console.log('SOLVEX API is not implemented yet.')\""
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "tsx --test test/core.test.ts",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
+    "db:seed": "tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.19.0",
+    "bcrypt": "^6.0.0",
+    "cookie": "^2.0.2",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.6",
+    "dotenv": "^18.0.10",
+    "express": "^5.3.0",
+    "express-rate-limit": "^8.7.5",
+    "file-type": "^22.3.0",
+    "helmet": "^8.3.0",
+    "multer": "^2.5.0",
+    "socket.io": "^4.8.4",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/bcrypt": "^6.0.0",
+    "@types/cookie": "^0.6.0",
+    "@types/cookie-parser": "^1.4.10",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/multer": "^2.3.0",
+    "@types/node": "^22.15.30",
+    "prisma": "^6.19.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
   }
 }

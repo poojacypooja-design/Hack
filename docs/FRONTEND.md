@@ -1,6 +1,6 @@
 # SOLVEX frontend foundation
 
-The repository is an npm-workspaces monorepo. The runnable Next.js App Router frontend is in `apps/web`; `apps/api` contains only the requested backend preparation structure and does not implement APIs, persistence, authentication, or real-time connections.
+The repository is an npm-workspaces monorepo. The runnable Next.js App Router frontend is in `apps/web`. The Express/Prisma API is in `apps/api`; the frontend has not yet been integrated with those endpoints.
 
 ## Frontend areas
 
@@ -10,12 +10,12 @@ The repository is an npm-workspaces monorepo. The runnable Next.js App Router fr
 - `apps/web/components` contains landing, workspace, common, and layout UI. Shared workspace dashboards use mock data and reusable ticket tables, cards, charts, badges, and journey/SLA views.
 - `apps/web/lib/mock-data.ts` is the isolated sample-data source. No frontend module connects to an API.
 - `apps/web/hooks`, `apps/web/types`, and `apps/web/public` are extension points for later development.
-- `apps/api/src` is arranged for future config, controllers, middleware, routes, services, sockets, utilities, and types. `apps/api/prisma` is reserved for later database work; no schema has been added.
+- `apps/api/src` contains the API config, controllers, middleware, routes, services, Socket.IO handlers, utilities, and types. `apps/api/prisma` contains the PostgreSQL schema, seed, and initial migration.
 - Root configuration holds npm workspaces, environment examples, and shared ignore rules. Existing project history and this README are retained.
 
 ## Sample behavior and access boundaries
 
-Forms, filters, sorting, notification controls, assignment recommendations, and chart interactions operate on local demonstration data only. Authentication, ticket ownership enforcement, SLA predictions, and role permissions must be implemented and enforced by the future backend; this UI does not claim to secure data or provide live monitoring.
+Forms, filters, sorting, notification controls, assignment recommendations, and chart interactions operate on local demonstration data only. The frontend is not yet wired to live API data. Server-side authentication, role checks, and ticket ownership controls are implemented in the API and apply only when clients use those endpoints; frontend mock data is not protected or live.
 
 ## Run
 

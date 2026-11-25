@@ -11,6 +11,7 @@ out/
 # build output
 dist/
 coverage/
+**/storage/uploads/
 
 # local environment
 .env
