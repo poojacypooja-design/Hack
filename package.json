@@ -1,0 +1,16 @@
+{
+  "name": "solvex",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "apps/web",
+    "apps/api"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace @solvex/web",
+    "build": "npm run build --workspace @solvex/web",
+    "lint": "npm run lint --workspace @solvex/web",
+    "typecheck": "npm run typecheck --workspace @solvex/web",
+    "dev:web": "npm run dev --workspace @solvex/web"
+  }
+}

@@ -336,3 +336,26 @@ By combining ticket management, SLA monitoring, incident detection, workload bal
 SOLVEX — Beyond Tickets. Predicting Problems.
 
 Developed by Team Hackhive | AVISHKAR'26
+
+---
+
+## Frontend foundation
+
+The SOLVEX frontend is available in `apps/web` as a Next.js App Router application. The customer portal, agent workspace, admin control center, authentication interfaces, SLA Rescue Radar, Issue DNA, Resolution Memory, and analytics screens use clearly labelled local sample data. No backend APIs, authentication, or database integration have been implemented yet.
+
+### Run the frontend
+
+From the repository root:
+
+```bash
+npm install
+npm run dev
+```
+
+Open `http://localhost:3000`. Run `npm run build`, `npm run typecheck`, and `npm run lint` to validate the frontend.
+
+### Project workspaces
+
+- `apps/web` — Next.js, React, TypeScript, Tailwind CSS, Lucide React, and Recharts frontend.
+- `apps/api` — reserved API workspace structure only; backend implementation and Prisma schema are intentionally deferred.
+- `docs/FRONTEND.md` — frontend organization, mock-data boundaries, and workspace notes.

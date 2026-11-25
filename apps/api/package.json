@@ -1,0 +1,10 @@
+{
+  "name": "@solvex/api",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SOLVEX API workspace placeholder. Backend implementation is planned for a later phase.",
+  "scripts": {
+    "dev": "node -e \"console.log('SOLVEX API is not implemented yet.')\"",
+    "build": "node -e \"console.log('SOLVEX API is not implemented yet.')\""
+  }
+}
