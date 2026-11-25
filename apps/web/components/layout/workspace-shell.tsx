@@ -31,6 +31,7 @@ import {
 import { useEffect, useState } from "react";
 import { navGroups } from "@/lib/mock-data";
 import { apiRequest, errorMessage, roleHome, type ApiRole } from "@/lib/api";
+import { getRealtimeSocket, REALTIME_UPDATE_EVENT } from "@/lib/realtime";
 import { useSession } from "@/lib/use-session";
 
 type Role = "customer" | "agent" | "admin";
@@ -71,10 +72,47 @@ export function WorkspaceShell({
   const router = useRouter();
   const [mobileMenu, setMobileMenu] = useState(false);
   const [logoutError, setLogoutError] = useState("");
+  const [realtimeStatus, setRealtimeStatus] = useState<"connecting" | "connected" | "disconnected">("connecting");
   const { user, loading, error, refresh } = useSession();
   const copy = roleCopy[role];
   const nav = navGroups[role];
   const requiredRole: ApiRole = role === "customer" ? "CUSTOMER" : role === "agent" ? "AGENT" : "ADMIN";
+
+  useEffect(() => {
+    if (!user?.id || user.role !== requiredRole) return;
+    const socket = getRealtimeSocket();
+    const eventNames = [
+      "ticket:new",
+      "ticket:assigned",
+      "assignment:new",
+      "ticket:updated",
+      "ticket:status",
+      "ticket:message",
+      "ticket:escalated",
+      "notification:new",
+      "sla:warning",
+    ];
+    const handlers = eventNames.map((eventName) => {
+      const handler = (payload: unknown) => {
+        window.dispatchEvent(new CustomEvent(REALTIME_UPDATE_EVENT, { detail: { eventName, payload } }));
+      };
+      socket.on(eventName, handler);
+      return { eventName, handler };
+    });
+    const onConnect = () => setRealtimeStatus("connected");
+    const onDisconnect = () => setRealtimeStatus("disconnected");
+    socket.on("connect", onConnect);
+    socket.on("disconnect", onDisconnect);
+    socket.on("connect_error", onDisconnect);
+    socket.connect();
+    return () => {
+      for (const { eventName, handler } of handlers) socket.off(eventName, handler);
+      socket.off("connect", onConnect);
+      socket.off("disconnect", onDisconnect);
+      socket.off("connect_error", onDisconnect);
+      socket.disconnect();
+    };
+  }, [requiredRole, user?.id, user?.role]);
 
   useEffect(() => {
     if (loading || error) return;
@@ -157,7 +195,8 @@ export function WorkspaceShell({
           </div>
           <div className="flex items-center gap-2 sm:gap-4">
             <label className="relative hidden md:block"><Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" /><input placeholder="Search anything…" className="h-9 w-[205px] rounded-lg border border-slate-200 bg-slate-50 pl-9 pr-3 text-[11px] outline-none focus:border-blue-300 focus:bg-white" /></label>
-            <Link href={`/${role}/notifications`} aria-label="Notifications" className="relative grid h-9 w-9 place-items-center rounded-lg border border-slate-200 text-slate-500 transition hover:bg-slate-50"><Bell size={16} /><span className="absolute right-2 top-1.5 h-1.5 w-1.5 rounded-full bg-rose-500 ring-2 ring-white" /></Link>
+            <span role="status" aria-label={`Live updates ${realtimeStatus}`} title={`Live updates ${realtimeStatus}`} className={`hidden items-center gap-1.5 text-[9px] font-medium sm:flex ${realtimeStatus === "connected" ? "text-emerald-700" : "text-slate-400"}`}><i className={`h-1.5 w-1.5 rounded-full ${realtimeStatus === "connected" ? "bg-emerald-500" : "bg-slate-300"}`} />Live</span>
+            <Link href={`/${role}/notifications`} aria-label="Notifications" className="relative grid h-9 w-9 place-items-center rounded-lg border border-slate-200 text-slate-500 transition hover:bg-slate-50"><Bell size={16} /></Link>
             <div className="hidden h-8 w-px bg-slate-200 sm:block" />
             <span className={`grid h-9 w-9 place-items-center rounded-full text-[11px] font-bold ${copy.tint}`}>{initials}</span>
           </div>

@@ -1,7 +1,7 @@
 import { TicketHistoryAction, TicketStatus, UserRole } from "@prisma/client";
 import { prisma } from "../config/database.js";
 import { ApiError } from "../utils/api-response.js";
-import { assertTicketAccess, type TicketActor } from "./ticket-access.service.js";
+import { assertTicketAccess, authorizedUnassignedWhere, type TicketActor } from "./ticket-access.service.js";
 import { ticketTextSimilarity } from "./issue-dna.service.js";
 
 export async function suggestResolutions(ticketId: string, actor: TicketActor) {
@@ -14,6 +14,19 @@ export async function suggestResolutions(ticketId: string, actor: TicketActor) {
     select: { id: true, subject: true, description: true, domain: true, category: true },
   });
   if (!ticket) throw new ApiError(404, "TICKET_NOT_FOUND", "The ticket was not found.");
+  const skills = actor.role === UserRole.AGENT
+    ? await authorizedUnassignedWhere(actor.userId)
+    : [];
+  const agentAccess = actor.role === UserRole.AGENT
+    ? {
+      OR: [
+        { assignedAgentId: actor.userId },
+        ...(skills.length
+          ? [{ assignedAgentId: null, OR: skills }]
+          : []),
+      ],
+    }
+    : undefined;
   const knowledge = await prisma.resolutionKnowledge.findMany({
     where: {
       ticketId: { not: ticketId },
@@ -22,7 +35,10 @@ export async function suggestResolutions(ticketId: string, actor: TicketActor) {
         { category: ticket.category },
         { tags: { hasSome: ticket.category.toLowerCase().split(/\s+/) } },
       ],
-      ticket: { status: { in: [TicketStatus.RESOLVED, TicketStatus.CLOSED] } },
+      ticket: {
+        status: { in: [TicketStatus.RESOLVED, TicketStatus.CLOSED] },
+        ...(agentAccess ?? {}),
+      },
     },
     select: {
       id: true,

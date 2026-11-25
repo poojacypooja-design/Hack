@@ -7,6 +7,6 @@ import { validate } from "../middleware/validation.middleware.js";
 import { analyticsQuerySchema } from "../utils/schemas.js";
 
 const router = Router();
-router.get("/", requireAuth, requireRoles(UserRole.ADMIN, UserRole.AGENT), validate(analyticsQuerySchema, "query"), overview);
+router.get("/", requireAuth, requireRoles(UserRole.CUSTOMER, UserRole.AGENT, UserRole.ADMIN), validate(analyticsQuerySchema, "query"), overview);
 
 export default router;

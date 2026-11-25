@@ -1,6 +1,5 @@
 import { Prisma, TicketStatus, UserRole } from "@prisma/client";
 import { prisma } from "../config/database.js";
-import { ApiError } from "../utils/api-response.js";
 import { getAgentWorkloads } from "./fairness.service.js";
 import type { TicketActor } from "./ticket-access.service.js";
 
@@ -8,25 +7,25 @@ export async function getAnalytics(
   actor: TicketActor,
   period: { from?: Date; to?: Date },
 ) {
-  if (actor.role === UserRole.CUSTOMER) {
-    throw new ApiError(403, "FORBIDDEN", "Organization analytics are available to support staff.");
-  }
   const dateFilter: Prisma.DateTimeFilter = {
     ...(period.from ? { gte: period.from } : {}),
     ...(period.to ? { lte: period.to } : {}),
   };
   const where: Prisma.TicketWhereInput = {
     ...(period.from || period.to ? { createdAt: dateFilter } : {}),
+    ...(actor.role === UserRole.CUSTOMER ? { customerId: actor.userId } : {}),
     ...(actor.role === UserRole.AGENT ? { assignedAgentId: actor.userId } : {}),
   };
   const durationConditions = [Prisma.sql`"resolvedAt" IS NOT NULL`];
   if (period.from) durationConditions.push(Prisma.sql`"createdAt" >= ${period.from}`);
   if (period.to) durationConditions.push(Prisma.sql`"createdAt" <= ${period.to}`);
+  if (actor.role === UserRole.CUSTOMER) durationConditions.push(Prisma.sql`"customerId" = ${actor.userId}::uuid`);
   if (actor.role === UserRole.AGENT) durationConditions.push(Prisma.sql`"assignedAgentId" = ${actor.userId}::uuid`);
 
   const [
     totalTickets,
     openTickets,
+    inProgressTickets,
     resolvedTickets,
     slaTotal,
     slaBreached,
@@ -36,7 +35,8 @@ export async function getAnalytics(
     satisfaction,
   ] = await Promise.all([
     prisma.ticket.count({ where }),
-    prisma.ticket.count({ where: { ...where, status: { in: [TicketStatus.OPEN, TicketStatus.IN_PROGRESS, TicketStatus.WAITING_FOR_CUSTOMER] } } }),
+    prisma.ticket.count({ where: { ...where, status: { in: [TicketStatus.OPEN, TicketStatus.WAITING_FOR_CUSTOMER] } } }),
+    prisma.ticket.count({ where: { ...where, status: TicketStatus.IN_PROGRESS } }),
     prisma.ticket.count({ where: { ...where, status: { in: [TicketStatus.RESOLVED, TicketStatus.CLOSED] } } }),
     prisma.sLARecord.count({ where: { ticket: where } }),
     prisma.sLARecord.count({
@@ -64,6 +64,7 @@ export async function getAnalytics(
   return {
     totalTickets,
     openTickets,
+    inProgressTickets,
     resolvedTickets,
     slaCompliance: slaTotal ? Math.round(((slaTotal - slaBreached) / slaTotal) * 10000) / 100 : 100,
     slaBreaches: slaBreached,

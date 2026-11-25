@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { apiRequest, type ApiSlaRisk } from "@/lib/api";
+import { REALTIME_UPDATE_EVENT } from "@/lib/realtime";
 
 export function useSlaRisks() {
   const [risks, setRisks] = useState<ApiSlaRisk[]>([]);
@@ -10,19 +11,25 @@ export function useSlaRisks() {
 
   useEffect(() => {
     let active = true;
-    apiRequest<{ items: ApiSlaRisk[] }>("/sla/risks")
-      .then((result) => {
-        if (active) setRisks(result.items);
-      })
-      .catch((requestError: unknown) => {
+    const loadRisks = async () => {
+      try {
+        const result = await apiRequest<{ items: ApiSlaRisk[] }>("/sla/risks");
+        if (active) {
+          setRisks(result.items);
+          setError("");
+        }
+      } catch (requestError) {
         if (active) setError(requestError instanceof Error ? requestError.message : "SLA risk data is unavailable.");
-      })
-      .finally(() => {
+      } finally {
         if (active) setLoading(false);
-      });
-
+      }
+    };
+    const refreshOnRealtimeUpdate = () => { void loadRisks(); };
+    void loadRisks();
+    window.addEventListener(REALTIME_UPDATE_EVENT, refreshOnRealtimeUpdate);
     return () => {
       active = false;
+      window.removeEventListener(REALTIME_UPDATE_EVENT, refreshOnRealtimeUpdate);
     };
   }, []);
 

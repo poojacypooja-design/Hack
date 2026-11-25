@@ -446,7 +446,7 @@ export async function submitFeedback(
   }
   return prisma.ticketFeedback.upsert({
     where: { ticketId },
-    update: { rating: input.rating, comment: input.comment },
-    create: { ticketId, customerId: actor.userId, rating: input.rating, comment: input.comment },
+    update: { rating: input.rating, comment: input.comment ?? null },
+    create: { ticketId, customerId: actor.userId, rating: input.rating, comment: input.comment ?? null },
   });
 }

@@ -27,18 +27,19 @@ import { CategoryChart, Panel, RiskCard, StatCard, VolumeChart } from "@/compone
 import { DashboardHeader } from "@/components/common/dashboard-header";
 import { PriorityBadge, StatusBadge, TicketTable } from "@/components/common/ticket-table";
 import { Modal, NotificationPanel, TicketTimeline } from "@/components/ui/primitives";
-import { apiJson, apiRequest, displayDomain, displayPriority, displayStatus, errorMessage, type ApiAnalytics, type ApiTicket, type ApiTicketHistory, type ApiTicketMessage } from "@/lib/api";
+import { apiJson, apiRequest, displayDomain, displayPriority, displayStatus, errorMessage, getApiBaseUrl, type ApiAnalytics, type ApiTicket, type ApiTicketHistory, type ApiTicketMessage } from "@/lib/api";
 import { toTicketView, useTicketList } from "@/lib/tickets";
 import { LoadingState } from "@/components/ui/primitives";
 import { useAnalytics } from "@/lib/use-analytics";
 import { useSlaRisks } from "@/lib/use-sla-risks";
 import { useSession } from "@/lib/use-session";
+import { getRealtimeSocket, REALTIME_UPDATE_EVENT } from "@/lib/realtime";
 
 type Role = "customer" | "agent" | "admin";
 
 const roleTitles: Record<Role, string> = {
   customer: "Your support, in focus.",
-  agent: "Good morning, Maya.",
+  agent: "Your queue, in focus.",
   admin: "Operations, at a glance.",
 };
 
@@ -202,9 +203,6 @@ function LiveOverview({ role }: { role: Role }) {
   const isAgent = role === "agent";
   const { tickets, total, loading: ticketsLoading, error: ticketsError } = useTicketList(role, isAgent ? "mine" : undefined);
   const { analytics, loading: analyticsLoading, error: analyticsError } = useAnalytics(role);
-  const openCount = tickets.filter((ticket) => ticket.status === "OPEN" || ticket.status === "WAITING_FOR_CUSTOMER").length;
-  const progressCount = tickets.filter((ticket) => ticket.status === "IN_PROGRESS").length;
-  const resolvedCount = tickets.filter((ticket) => ticket.status === "RESOLVED" || ticket.status === "CLOSED").length;
   const stats = isAdmin
     ? [
       { label: "Total tickets", value: analytics ? String(analytics.totalTickets) : "—", icon: FileText, tone: "blue" as const, caption: "API total" },
@@ -220,16 +218,17 @@ function LiveOverview({ role }: { role: Role }) {
         { label: "SLA breaches", value: analytics ? String(analytics.slaBreaches) : "—", icon: ShieldAlert, tone: "rose" as const, caption: "API metric" },
       ]
       : [
-        { label: "My tickets", value: String(total), icon: FileText, tone: "blue" as const, caption: "API total" },
-        { label: "Open (loaded page)", value: ticketsLoading ? "—" : String(openCount), icon: Clock3, tone: "amber" as const, caption: "API records" },
-        { label: "In progress (loaded page)", value: ticketsLoading ? "—" : String(progressCount), icon: Activity, tone: "violet" as const, caption: "API records" },
-        { label: "Resolved (loaded page)", value: ticketsLoading ? "—" : String(resolvedCount), icon: CheckCircle2, tone: "teal" as const, caption: "API records" },
+        { label: "Total tickets", value: analytics ? String(analytics.totalTickets) : analyticsLoading ? "—" : "Unavailable", icon: FileText, tone: "blue" as const, caption: "Your account" },
+        { label: "Open tickets", value: analytics ? String(analytics.openTickets) : analyticsLoading ? "—" : "Unavailable", icon: Clock3, tone: "amber" as const, caption: "Your account" },
+        { label: "In progress", value: analytics ? String(analytics.inProgressTickets) : analyticsLoading ? "—" : "Unavailable", icon: Activity, tone: "violet" as const, caption: "Your account" },
+        { label: "Resolved", value: analytics ? String(analytics.resolvedTickets) : analyticsLoading ? "—" : "Unavailable", icon: CheckCircle2, tone: "teal" as const, caption: "Your account" },
       ];
 
   return (
     <>
-      {(ticketsError || analyticsError) && <p role="alert" className="rounded-lg bg-rose-50 p-3 text-xs text-rose-700">{ticketsError || analyticsError}</p>}
-      {analyticsLoading && role !== "customer" && <LoadingState label="Loading workspace analytics" />}
+      {ticketsError && <p role="alert" className="rounded-lg bg-rose-50 p-3 text-xs text-rose-700">{ticketsError}</p>}
+      {analyticsError && <p role="alert" className="rounded-lg bg-rose-50 p-3 text-xs text-rose-700">{analyticsError}</p>}
+      {analyticsLoading && <LoadingState label="Loading workspace analytics" />}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">{stats.map((stat) => <StatCard key={stat.label} {...stat} />)}</div>
       {isAdmin && analytics && <div className="grid gap-4 sm:grid-cols-3">
         <StatCard label="SLA breaches" value={String(analytics.slaBreaches)} caption="API metric" icon={ShieldAlert} tone="rose" />
@@ -285,9 +284,12 @@ function CreateTicket({ onCreated }: { onCreated: () => void }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [createdTicket, setCreatedTicket] = useState<ApiTicket | null>(null);
+  const submissionInFlight = useRef(false);
   const categories = categoriesByDomain[domain];
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (submissionInFlight.current) return;
+    submissionInFlight.current = true;
     setSaving(true);
     setError("");
     const formData = new FormData(event.currentTarget);
@@ -325,6 +327,7 @@ function CreateTicket({ onCreated }: { onCreated: () => void }) {
       setError(errorMessage(requestError));
     } finally {
       setSaving(false);
+      submissionInFlight.current = false;
     }
   }
   return (
@@ -357,7 +360,6 @@ function CreateTicket({ onCreated }: { onCreated: () => void }) {
           <label className="flex min-h-32 cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50 p-5 text-center transition hover:border-blue-400 hover:bg-blue-50/50"><span className="mb-2 grid h-9 w-9 place-items-center rounded-full bg-white text-slate-500 shadow-sm"><Plus size={18} /></span><span className="text-xs font-semibold text-slate-700">{fileName || "Add an attachment"}</span><span className="mt-1 text-[10px] text-slate-400">PNG, JPG, PDF up to 10 MB</span><input type="file" accept=".png,.jpg,.jpeg,.pdf" className="sr-only" onChange={(event) => { const selected = event.target.files?.[0] ?? null; setFile(selected); setFileName(selected?.name ?? ""); }} /></label>
         </Panel>
         <div className="rounded-2xl border border-blue-100 bg-blue-50/70 p-5"><div className="flex items-center gap-2 text-blue-700"><Sparkles size={16} /><p className="text-xs font-bold">Problem reproduction details</p></div><p className="mt-2 text-[11px] leading-relaxed text-slate-600">Your expected result, observed behavior, reference, and attempted steps are included in the ticket description. No automated diagnosis is available.</p></div>
-        <RiskCard compact />
       </aside>
     </form>
     <Modal open={confirmationOpen} title="Support request created" onClose={() => setConfirmationOpen(false)}>
@@ -373,33 +375,67 @@ function Field({ label, wide = false, children }: { label: string; wide?: boolea
   return <label className={`block text-[11px] font-semibold text-slate-700 ${wide ? "sm:col-span-2" : ""}`}>{label}{children}</label>;
 }
 
+type SimilarTicketResult = {
+  matches: Array<{ ticketId: string; ticketCode: string; subject: string; similarity: number; matchedSignals: string[] }>;
+};
+
+type ResolutionSuggestionResult = {
+  suggestions: Array<{ id: string; title: string; solution: string; similarity: number; ticket: { ticketCode: string } }>;
+};
+
+async function fetchTicketDetails(role: Role, ticketId: string) {
+  const { ticket } = await apiRequest<{ ticket: ApiTicket }>(`/tickets/${encodeURIComponent(ticketId)}`);
+  if (role === "customer") {
+    return { ticket, similar: null, similarError: "", suggestions: null, suggestionsError: "" };
+  }
+  const [similar, suggestions] = await Promise.all([
+    apiRequest<SimilarTicketResult>(`/tickets/${encodeURIComponent(ticketId)}/similar`)
+      .then((data) => ({ data, error: "" }))
+      .catch((requestError: unknown) => ({ data: null, error: errorMessage(requestError) })),
+    apiRequest<ResolutionSuggestionResult>(`/tickets/${encodeURIComponent(ticketId)}/resolution-suggestions`)
+      .then((data) => ({ data, error: "" }))
+      .catch((requestError: unknown) => ({ data: null, error: errorMessage(requestError) })),
+  ]);
+  return {
+    ticket,
+    similar: similar.data,
+    similarError: similar.error,
+    suggestions: suggestions.data,
+    suggestionsError: suggestions.error,
+  };
+}
+
 function TicketDetail({ role, ticketId, onAction }: { role: Role; ticketId: string; onAction: (message: string) => void }) {
   const [ticket, setTicket] = useState<ApiTicket | null>(null);
   const [reply, setReply] = useState("");
   const [noteMode, setNoteMode] = useState(false);
   const [feedback, setFeedback] = useState(0);
+  const [feedbackComment, setFeedbackComment] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [actionError, setActionError] = useState("");
-  const [similar, setSimilar] = useState<{ matches: Array<{ ticketId: string; ticketCode: string; subject: string; similarity: number; matchedSignals: string[] }> } | null>(null);
-  const [suggestions, setSuggestions] = useState<{ suggestions: Array<{ id: string; title: string; solution: string; similarity: number; ticket: { ticketCode: string } }> } | null>(null);
+  const [actionSaving, setActionSaving] = useState(false);
+  const actionInFlight = useRef(false);
+  const [similar, setSimilar] = useState<SimilarTicketResult | null>(null);
+  const [suggestions, setSuggestions] = useState<ResolutionSuggestionResult | null>(null);
   const [similarError, setSimilarError] = useState("");
   const [suggestionsError, setSuggestionsError] = useState("");
+  const [groupingTicketId, setGroupingTicketId] = useState("");
+  const [groupingError, setGroupingError] = useState("");
+  const [groupingMessage, setGroupingMessage] = useState("");
 
+  const loadTicketRef = useRef<() => Promise<void>>(async () => undefined);
   const loadTicket = useCallback(async () => {
+    setError("");
     try {
-      const result = await apiRequest<{ ticket: ApiTicket }>(`/tickets/${encodeURIComponent(ticketId)}`);
+      const result = await fetchTicketDetails(role, ticketId);
       setTicket(result.ticket);
-      if (role !== "customer") {
-        await Promise.all([
-          apiRequest<{ matches: Array<{ ticketId: string; ticketCode: string; subject: string; similarity: number; matchedSignals: string[] }> }>(`/tickets/${encodeURIComponent(ticketId)}/similar`)
-            .then((value) => { setSimilar(value); setSimilarError(""); })
-            .catch((featureError: unknown) => setSimilarError(errorMessage(featureError))),
-          apiRequest<{ suggestions: Array<{ id: string; title: string; solution: string; similarity: number; ticket: { ticketCode: string } }> }>(`/tickets/${encodeURIComponent(ticketId)}/resolution-suggestions`)
-            .then((value) => { setSuggestions(value); setSuggestionsError(""); })
-            .catch((featureError: unknown) => setSuggestionsError(errorMessage(featureError))),
-        ]);
-      }
+      setFeedback(result.ticket.feedback?.rating ?? 0);
+      setFeedbackComment(result.ticket.feedback?.comment ?? "");
+      setSimilar(result.similar);
+      setSimilarError(result.similarError);
+      setSuggestions(result.suggestions);
+      setSuggestionsError(result.suggestionsError);
     } catch (requestError) {
       setError(errorMessage(requestError));
     } finally {
@@ -408,18 +444,42 @@ function TicketDetail({ role, ticketId, onAction }: { role: Role; ticketId: stri
   }, [role, ticketId]);
 
   useEffect(() => {
+    loadTicketRef.current = loadTicket;
+  }, [loadTicket]);
+
+  useEffect(() => {
+    const socket = getRealtimeSocket();
+    const joinTicketRoom = () => {
+      socket.emit("ticket:join", { ticketId }, (result: { success: boolean; message?: string }) => {
+        if (!result.success) setActionError(result.message ?? "Live ticket updates are unavailable.");
+      });
+    };
+    const refreshTicket = (payload: { ticketId?: string }) => {
+      if (payload?.ticketId === ticketId) void loadTicketRef.current();
+    };
+    const events = ["ticket:message", "ticket:status", "ticket:updated", "ticket:assigned", "ticket:escalated", "sla:warning"];
+    socket.on("connect", joinTicketRoom);
+    for (const eventName of events) socket.on(eventName, refreshTicket);
+    if (socket.connected) joinTicketRoom();
+    return () => {
+      socket.off("connect", joinTicketRoom);
+      for (const eventName of events) socket.off(eventName, refreshTicket);
+      if (socket.connected) socket.emit("ticket:leave", { ticketId });
+    };
+  }, [ticketId]);
+
+  useEffect(() => {
     let active = true;
-    apiRequest<{ ticket: ApiTicket }>(`/tickets/${encodeURIComponent(ticketId)}`)
+    fetchTicketDetails(role, ticketId)
       .then((result) => {
         if (!active) return;
         setTicket(result.ticket);
-        if (role === "customer") return;
-        apiRequest<{ matches: Array<{ ticketId: string; ticketCode: string; subject: string; similarity: number; matchedSignals: string[] }> }>(`/tickets/${encodeURIComponent(ticketId)}/similar`)
-          .then((value) => { if (active) setSimilar(value); })
-          .catch((featureError: unknown) => { if (active) setSimilarError(errorMessage(featureError)); });
-        apiRequest<{ suggestions: Array<{ id: string; title: string; solution: string; similarity: number; ticket: { ticketCode: string } }> }>(`/tickets/${encodeURIComponent(ticketId)}/resolution-suggestions`)
-          .then((value) => { if (active) setSuggestions(value); })
-          .catch((featureError: unknown) => { if (active) setSuggestionsError(errorMessage(featureError)); });
+        setFeedback(result.ticket.feedback?.rating ?? 0);
+        setFeedbackComment(result.ticket.feedback?.comment ?? "");
+        setSimilar(result.similar);
+        setSimilarError(result.similarError);
+        setSuggestions(result.suggestions);
+        setSuggestionsError(result.suggestionsError);
       })
       .catch((requestError: unknown) => { if (active) setError(errorMessage(requestError)); })
       .finally(() => { if (active) setLoading(false); });
@@ -428,51 +488,107 @@ function TicketDetail({ role, ticketId, onAction }: { role: Role; ticketId: stri
 
   async function sendReply(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!ticket || !reply.trim()) return;
+    if (!ticket || !reply.trim() || actionInFlight.current) return;
+    actionInFlight.current = true;
+    setActionSaving(true);
     setActionError("");
     try {
       await apiJson(`/messages/${encodeURIComponent(ticket.id)}${noteMode ? "/internal-notes" : ""}`, "POST", { body: reply.trim() });
       setReply("");
+      setLoading(true);
       await loadTicket();
       onAction(noteMode ? "Private note added." : "Reply sent.");
     } catch (requestError) {
       setActionError(errorMessage(requestError));
+    } finally {
+      actionInFlight.current = false;
+      setActionSaving(false);
     }
   }
 
   async function changeStatus(status: ApiTicket["status"]) {
-    if (!ticket) return;
+    if (!ticket || actionInFlight.current) return;
+    actionInFlight.current = true;
+    setActionSaving(true);
     setActionError("");
     try {
       await apiJson(`/tickets/${encodeURIComponent(ticket.id)}/status`, "PATCH", { status });
+      setLoading(true);
       await loadTicket();
       onAction(`Ticket status changed to ${displayStatus(status)}.`);
     } catch (requestError) {
       setActionError(errorMessage(requestError));
+    } finally {
+      actionInFlight.current = false;
+      setActionSaving(false);
     }
   }
 
   async function submitFeedback() {
-    if (!ticket || feedback < 1) return;
+    if (!ticket || feedback < 1 || actionInFlight.current) return;
+    actionInFlight.current = true;
+    setActionSaving(true);
     setActionError("");
     try {
-      await apiJson(`/tickets/${encodeURIComponent(ticket.id)}/feedback`, "POST", { rating: feedback });
+      await apiJson(`/tickets/${encodeURIComponent(ticket.id)}/feedback`, "POST", {
+        rating: feedback,
+        ...(feedbackComment.trim() ? { comment: feedbackComment.trim() } : {}),
+      });
+      setLoading(true);
       await loadTicket();
-      onAction("Feedback submitted.");
+      onAction(ticket.feedback ? "Feedback updated." : "Feedback submitted.");
     } catch (requestError) {
       setActionError(errorMessage(requestError));
+    } finally {
+      actionInFlight.current = false;
+      setActionSaving(false);
     }
   }
 
   async function confirmResolution() {
-    if (!ticket) return;
+    if (!ticket || ticket.status !== "RESOLVED" || actionInFlight.current) return;
+    actionInFlight.current = true;
+    setActionSaving(true);
     setActionError("");
     try {
       await apiRequest(`/tickets/${encodeURIComponent(ticket.id)}/confirm-resolution`, { method: "POST" });
+      setLoading(true);
       await loadTicket();
       onAction("Resolution confirmed.");
     } catch (requestError) {
       setActionError(errorMessage(requestError));
+    } finally {
+      actionInFlight.current = false;
+      setActionSaving(false);
+    }
+  }
+
+  async function groupSimilarTicket(match: SimilarTicketResult["matches"][number]) {
+    if (!ticket || groupingTicketId) return;
+    setGroupingTicketId(match.ticketId);
+    setGroupingError("");
+    setGroupingMessage("");
+    try {
+      const groups = await apiRequest<{ items: Array<{ tickets: Array<{ ticket: { id: string } }> }> }>("/incidents");
+      const alreadyGrouped = groups.items.some((group) => {
+        const ids = group.tickets.map(({ ticket: groupedTicket }) => groupedTicket.id);
+        return ids.includes(ticket.id) && ids.includes(match.ticketId);
+      });
+      if (alreadyGrouped) {
+        setGroupingError("These tickets are already included in an incident group.");
+        return;
+      }
+      await apiJson("/incidents", "POST", {
+        ticketIds: [ticket.id, match.ticketId],
+        title: `Related tickets ${ticket.ticketCode} and ${match.ticketCode}`,
+        summary: `Human-reviewed match. Shared signals: ${match.matchedSignals.join(", ")}.`,
+      });
+      setGroupingMessage("Incident group created for team review.");
+      onAction("Similar tickets grouped for human review.");
+    } catch (requestError) {
+      setGroupingError(errorMessage(requestError));
+    } finally {
+      setGroupingTicketId("");
     }
   }
 
@@ -494,25 +610,25 @@ function TicketDetail({ role, ticketId, onAction }: { role: Role; ticketId: stri
           <Panel title={ticket.subject} subtitle={`Created ${new Date(ticket.createdAt).toLocaleString()} by ${ticket.customer.fullName}`}>
             <p className="whitespace-pre-wrap text-sm leading-7 text-slate-600">{ticket.description}</p>
             <div className="mt-4 flex flex-wrap gap-2 text-[10px] text-slate-500"><span className="rounded-md bg-slate-100 px-2.5 py-1.5">Domain · {displayDomain(ticket.domain)}</span><span className="rounded-md bg-slate-100 px-2.5 py-1.5">Priority · {displayPriority(ticket.priority)}</span><span className="rounded-md bg-slate-100 px-2.5 py-1.5">{ticket.attachments?.length ?? 0} attachments</span></div>
-            {ticket.attachments && ticket.attachments.length > 0 && <ul className="mt-4 space-y-2">{ticket.attachments.map((attachment) => <li key={attachment.id}><a className="text-xs font-semibold text-blue-600 hover:underline" href={`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api"}/tickets/${encodeURIComponent(ticket.id)}/attachments/${encodeURIComponent(attachment.id)}`} target="_blank" rel="noreferrer">{attachment.originalName}</a></li>)}</ul>}
+            {ticket.attachments && ticket.attachments.length > 0 && <ul className="mt-4 space-y-2">{ticket.attachments.map((attachment) => <li key={attachment.id}><a className="text-xs font-semibold text-blue-600 hover:underline" href={`${getApiBaseUrl()}/tickets/${encodeURIComponent(ticket.id)}/attachments/${encodeURIComponent(attachment.id)}`} target="_blank" rel="noreferrer">{attachment.originalName}</a></li>)}</ul>}
           </Panel>
           <Panel title={role === "customer" ? "Conversation" : "Conversation & notes"} subtitle="Messages and notes are loaded from this ticket.">
             <div className="space-y-4">{messages.map((message) => <Message key={message.id} author={message.author.fullName} initials={message.author.fullName.split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase()} time={new Date(message.createdAt).toLocaleString()} internal={notes.some((note) => note.id === message.id)}>{message.body}</Message>)}{messages.length === 0 && <p className="text-xs text-slate-500">No messages yet.</p>}</div>
             <form onSubmit={sendReply} className={`mt-5 rounded-xl border p-3 ${noteMode ? "border-amber-200 bg-amber-50/60" : "border-slate-200 bg-slate-50"}`}>
               {role !== "customer" && <div className="mb-2 flex gap-2"><button type="button" onClick={() => setNoteMode(false)} className={`rounded-md px-2.5 py-1 text-[10px] font-semibold ${!noteMode ? "bg-blue-600 text-white" : "text-slate-500 hover:bg-white"}`}>Public reply</button><button type="button" onClick={() => setNoteMode(true)} className={`rounded-md px-2.5 py-1 text-[10px] font-semibold ${noteMode ? "bg-amber-500 text-white" : "text-slate-500 hover:bg-white"}`}>Private note</button></div>}
               <textarea required value={reply} onChange={(event) => setReply(event.target.value)} rows={3} placeholder={noteMode ? "Add an internal note — only your team can see this…" : "Write a helpful response…"} className="w-full resize-y bg-transparent text-xs outline-none placeholder:text-slate-400" />
-              <div className="flex justify-end"><button className={`rounded-lg px-3 py-2 text-[10px] font-bold text-white ${noteMode ? "bg-amber-500 hover:bg-amber-600" : "bg-blue-600 hover:bg-blue-700"}`}>{noteMode ? "Add private note" : "Send reply"}</button></div>
+              <div className="flex justify-end"><button disabled={actionSaving} className={`rounded-lg px-3 py-2 text-[10px] font-bold text-white disabled:opacity-60 ${noteMode ? "bg-amber-500 hover:bg-amber-600" : "bg-blue-600 hover:bg-blue-700"}`}>{actionSaving ? "Sending…" : noteMode ? "Add private note" : "Send reply"}</button></div>
             </form>
             {actionError && <p role="alert" className="mt-3 rounded-lg bg-rose-50 p-3 text-xs text-rose-700">{actionError}</p>}
           </Panel>
-          {(ticket.status === "RESOLVED" || ticket.status === "CLOSED") && role === "customer" && <Panel title="Was this resolution helpful?" subtitle="Your feedback is submitted to the support team."><div className="flex gap-2">{[1, 2, 3, 4, 5].map((rating) => <button type="button" key={rating} onClick={() => setFeedback(rating)} aria-label={`${rating} stars`} className={`grid h-9 w-9 place-items-center rounded-full text-sm ${feedback >= rating ? "bg-amber-100 text-amber-600" : "bg-slate-100 text-slate-400"}`}>★</button>)}</div><div className="mt-4 flex gap-2"><button type="button" disabled={!feedback} onClick={() => void submitFeedback()} className="rounded-lg bg-blue-600 px-3 py-2 text-[10px] font-semibold text-white disabled:opacity-50">Submit rating</button><button type="button" onClick={() => void confirmResolution()} className="rounded-lg border border-slate-200 px-3 py-2 text-[10px] font-semibold text-slate-600 hover:bg-slate-50">Confirm resolution</button></div></Panel>}
+          {(ticket.status === "RESOLVED" || ticket.status === "CLOSED") && role === "customer" && <Panel title="Was this resolution helpful?" subtitle={ticket.feedback ? "Your recorded feedback can be updated." : "Your feedback is submitted to the support team."}>{ticket.feedback && <p className="mb-3 text-xs text-slate-600">Current rating: {ticket.feedback.rating} / 5</p>}<div className="flex gap-2">{[1, 2, 3, 4, 5].map((rating) => <button type="button" key={rating} onClick={() => setFeedback(rating)} aria-label={`${rating} stars`} className={`grid h-9 w-9 place-items-center rounded-full text-sm ${feedback >= rating ? "bg-amber-100 text-amber-600" : "bg-slate-100 text-slate-400"}`}>★</button>)}</div><textarea value={feedbackComment} onChange={(event) => setFeedbackComment(event.target.value)} maxLength={2000} rows={3} placeholder="Optional feedback" className={`${inputClass} mt-3 h-auto py-2`} /><div className="mt-4 flex gap-2"><button type="button" disabled={!feedback || actionSaving} onClick={() => void submitFeedback()} className="rounded-lg bg-blue-600 px-3 py-2 text-[10px] font-semibold text-white disabled:opacity-50">{actionSaving ? "Saving…" : ticket.feedback ? "Update rating" : "Submit rating"}</button>{ticket.status === "RESOLVED" && <button type="button" disabled={actionSaving} onClick={() => void confirmResolution()} className="rounded-lg border border-slate-200 px-3 py-2 text-[10px] font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-50">Confirm resolution</button>}</div>{actionError && <p role="alert" className="mt-3 text-xs text-rose-700">{actionError}</p>}</Panel>}
           <Panel title="Ticket activity" subtitle="History returned by the API; customer access is filtered by the server."><HistoryList items={ticket.history ?? []} /></Panel>
         </div>
         <div className="space-y-4">
-          {role !== "customer" && <Panel title="Ticket status" subtitle="The API validates allowed status transitions."><select aria-label="Update ticket status" value={ticket.status} onChange={(event) => void changeStatus(event.target.value as ApiTicket["status"])} className={inputClass}><option value="OPEN">Open</option><option value="IN_PROGRESS">In progress</option><option value="WAITING_FOR_CUSTOMER">Waiting for customer</option><option value="RESOLVED">Resolved</option><option value="CLOSED">Closed</option></select></Panel>}
+          {role !== "customer" && <Panel title="Ticket status" subtitle="The API validates allowed status transitions."><select aria-label="Update ticket status" disabled={actionSaving} value={ticket.status} onChange={(event) => void changeStatus(event.target.value as ApiTicket["status"])} className={inputClass}><option value="OPEN">Open</option><option value="IN_PROGRESS">In progress</option><option value="WAITING_FOR_CUSTOMER">Waiting for customer</option><option value="RESOLVED">Resolved</option><option value="CLOSED">Closed</option></select></Panel>}
           <Panel title="Ticket details"><DetailLine label="Assigned agent" value={ticket.assignedAgent?.fullName ?? "Unassigned"} /><DetailLine label="Updated" value={new Date(ticket.updatedAt).toLocaleString()} /><DetailLine label="SLA deadline" value={dueAt ? new Date(dueAt).toLocaleString() : "Unavailable"} /><DetailLine label="Ticket owner" value={ticket.customer.fullName} /></Panel>
-          {role !== "customer" && <Panel title="Issue DNA" subtitle="Similarity results calculated by the API.">{similarError ? <p role="alert" className="text-xs text-rose-700">{similarError}</p> : similar?.matches.length ? <ul className="space-y-3">{similar.matches.map((match) => <li key={match.ticketId} className="rounded-lg bg-violet-50 p-3"><Link href={`/${role}/tickets/${match.ticketId}`} className="text-xs font-bold text-violet-800 hover:underline">{match.ticketCode} · {match.subject}</Link><p className="mt-1 text-[10px] text-slate-600">{match.similarity}% similarity · {match.matchedSignals.join(", ")}</p></li>)}</ul> : <p className="text-xs text-slate-500">{similar ? "No similar tickets were returned." : "Loading similar tickets…"}</p>}</Panel>}
-          {role !== "customer" && <Panel title="Resolution Memory" subtitle="Historical resolutions ranked by the API.">{suggestionsError ? <p role="alert" className="text-xs text-rose-700">{suggestionsError}</p> : suggestions?.suggestions.length ? <ul className="space-y-3">{suggestions.suggestions.map((suggestion) => <li key={suggestion.id} className="rounded-lg border border-slate-100 p-3"><p className="text-xs font-semibold text-slate-800">{suggestion.title}</p><p className="mt-1 text-[10px] text-slate-500">{suggestion.ticket.ticketCode} · {suggestion.similarity}% similarity</p><p className="mt-2 whitespace-pre-wrap text-xs text-slate-600">{suggestion.solution}</p></li>)}</ul> : <p className="text-xs text-slate-500">{suggestions ? "No matching saved resolutions are available." : "Loading saved resolutions…"}</p>}</Panel>}
+          {role !== "customer" && <Panel title="Issue DNA" subtitle="Similarity results calculated by the API; review before grouping.">{similarError ? <p role="alert" className="text-xs text-rose-700">{similarError}</p> : similar?.matches.length ? <ul className="space-y-3">{similar.matches.map((match) => <li key={match.ticketId} className="rounded-lg bg-violet-50 p-3"><Link href={`/${role}/tickets/${match.ticketId}`} className="text-xs font-bold text-violet-800 hover:underline">{match.ticketCode} · {match.subject}</Link><p className="mt-1 text-[10px] text-slate-600">{match.similarity}% similarity · {match.matchedSignals.join(", ")}</p><button type="button" disabled={Boolean(groupingTicketId)} onClick={() => void groupSimilarTicket(match)} className="mt-2 rounded-md border border-violet-200 px-2.5 py-1.5 text-[9px] font-semibold text-violet-800 disabled:opacity-50">{groupingTicketId === match.ticketId ? "Grouping…" : "Create incident group"}</button></li>)}</ul> : <p className="text-xs text-slate-500">{similar ? "No similar tickets were returned." : "Loading similar tickets…"}</p>}{groupingError && <p role="alert" className="mt-3 text-xs text-rose-700">{groupingError}</p>}{groupingMessage && <p role="status" className="mt-3 text-xs text-emerald-700">{groupingMessage}</p>}</Panel>}
+          {role !== "customer" && <Panel title="Resolution Memory" subtitle="Historical resolutions ranked by the API. Reuse a suggestion as an editable public reply.">{suggestionsError ? <p role="alert" className="text-xs text-rose-700">{suggestionsError}</p> : suggestions?.suggestions.length ? <ul className="space-y-3">{suggestions.suggestions.map((suggestion) => <li key={suggestion.id} className="rounded-lg border border-slate-100 p-3"><p className="text-xs font-semibold text-slate-800">{suggestion.title}</p><p className="mt-1 text-[10px] text-slate-500">{suggestion.ticket.ticketCode} · {suggestion.similarity}% similarity</p><p className="mt-2 whitespace-pre-wrap text-xs text-slate-600">{suggestion.solution}</p><button type="button" disabled={actionSaving} onClick={() => { setReply(suggestion.solution); setNoteMode(false); onAction("Resolution copied to the public reply draft."); }} className="mt-3 rounded-md border border-blue-100 px-2.5 py-1.5 text-[9px] font-semibold text-blue-700 disabled:opacity-50">Use in public reply</button></li>)}</ul> : <p className="text-xs text-slate-500">{suggestions ? "No matching saved resolutions are available." : "Loading saved resolutions…"}</p>}</Panel>}
         </div>
       </div>
     </>
@@ -563,11 +679,26 @@ function NoSilenceCard() {
 
   useEffect(() => {
     let active = true;
-    apiRequest<{ items: Array<{ id: string; type: string; title: string; body: string; ticketId: string | null }> }>("/notifications?page=1&limit=100")
-      .then((result) => { if (active) setItems(result.items.filter((item) => item.type === "NO_SILENCE")); })
-      .catch((requestError: unknown) => { if (active) setError(errorMessage(requestError)); })
-      .finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
+    const loadNotifications = async () => {
+      try {
+        const result = await apiRequest<{ items: Array<{ id: string; type: string; title: string; body: string; ticketId: string | null }> }>("/notifications?page=1&limit=100");
+        if (active) {
+          setItems(result.items.filter((item) => item.type === "NO_SILENCE"));
+          setError("");
+        }
+      } catch (requestError) {
+        if (active) setError(errorMessage(requestError));
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+    const refreshOnRealtimeUpdate = () => { void loadNotifications(); };
+    void loadNotifications();
+    window.addEventListener(REALTIME_UPDATE_EVENT, refreshOnRealtimeUpdate);
+    return () => {
+      active = false;
+      window.removeEventListener(REALTIME_UPDATE_EVENT, refreshOnRealtimeUpdate);
+    };
   }, []);
 
   return <Panel title="No-Silence Promise" subtitle="Alerts returned by your account's notification feed." action={<span className="rounded-full bg-amber-50 px-2 py-1 text-[9px] font-bold text-amber-700">{items.length} ALERTS</span>}>
@@ -642,6 +773,7 @@ function LiveIssueDna({ role }: { role: Role }) {
   const [error, setError] = useState("");
 
   const loadGroups = useCallback(async () => {
+    setError("");
     try {
       const result = await apiRequest<{ items: Incident[] }>("/incidents");
       setGroups(result.items);
@@ -660,6 +792,12 @@ function LiveIssueDna({ role }: { role: Role }) {
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, []);
+
+  useEffect(() => {
+    const refreshOnRealtimeUpdate = () => { void loadGroups(); };
+    window.addEventListener(REALTIME_UPDATE_EVENT, refreshOnRealtimeUpdate);
+    return () => window.removeEventListener(REALTIME_UPDATE_EVENT, refreshOnRealtimeUpdate);
+  }, [loadGroups]);
 
   async function reviewGroup(id: string, status: "CONFIRMED" | "RESOLVED") {
     setLoading(true);
@@ -725,24 +863,12 @@ function LiveNotifications({ role }: { role: Role }) {
       const result = await apiRequest<{ items: Notification[]; unreadCount: number }>("/notifications?page=1&limit=100");
       setItems(result.items);
       setUnreadCount(result.unreadCount);
+      setError("");
     } catch (requestError) {
       setError(errorMessage(requestError));
     } finally {
       setLoading(false);
     }
-  }, []);
-
-  useEffect(() => {
-    let active = true;
-    apiRequest<{ items: Notification[]; unreadCount: number }>("/notifications?page=1&limit=100")
-      .then((result) => {
-        if (!active) return;
-        setItems(result.items);
-        setUnreadCount(result.unreadCount);
-      })
-      .catch((requestError: unknown) => { if (active) setError(errorMessage(requestError)); })
-      .finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
   }, []);
 
   async function markRead(id: string, read: boolean) {
@@ -766,6 +892,24 @@ function LiveNotifications({ role }: { role: Role }) {
       setError(errorMessage(requestError));
     }
   }
+
+  useEffect(() => {
+    let active = true;
+    apiRequest<{ items: Notification[]; unreadCount: number }>("/notifications?page=1&limit=100")
+      .then((result) => {
+        if (!active) return;
+        setItems(result.items);
+        setUnreadCount(result.unreadCount);
+      })
+      .catch((requestError: unknown) => { if (active) setError(errorMessage(requestError)); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener(REALTIME_UPDATE_EVENT, loadNotifications);
+    return () => window.removeEventListener(REALTIME_UPDATE_EVENT, loadNotifications);
+  }, [loadNotifications]);
 
   return <div className="surface-card"><div className="flex items-start justify-between gap-4 border-b border-slate-100 px-5 py-4"><div><h2 className="text-[15px] font-bold text-slate-900">Your updates</h2><p className="mt-1 text-xs text-slate-500">{unreadCount} unread notification{unreadCount === 1 ? "" : "s"}</p></div><button disabled={unreadCount === 0 || loading} onClick={() => void markAllRead()} className="text-[10px] font-semibold text-blue-600 disabled:text-slate-400">Mark all as read</button></div><NotificationPanel title="Latest notifications" description="Notifications from the API"><div className="px-5"><div role="alert">{error && <p className="my-3 rounded-lg bg-rose-50 p-3 text-xs text-rose-700">{error}</p>}</div>{loading ? <div className="py-5"><LoadingState label="Loading notifications" /></div> : items.length ? <div className="divide-y divide-slate-100">{items.map((item) => <div key={item.id} className={`flex items-start gap-3 py-4 ${item.readAt ? "opacity-70" : ""}`}><span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-blue-50 text-blue-600"><MessageSquareText size={16} /></span><div className="flex-1"><p className="text-xs font-bold text-slate-800">{item.title} {!item.readAt && <i className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-blue-600" />}</p><p className="mt-1 text-[11px] text-slate-500">{item.body}</p><p className="mt-1.5 text-[9px] text-slate-400">{new Date(item.createdAt).toLocaleString()}</p>{item.ticketId && <Link href={`/${role}/tickets/${item.ticketId}`} className="mt-2 inline-block text-[10px] font-semibold text-blue-600">View ticket →</Link>}</div><button onClick={() => void markRead(item.id, !item.readAt)} className="text-[9px] font-semibold text-slate-400 hover:text-blue-600">{item.readAt ? "Mark unread" : "Mark read"}</button></div>)}</div> : <p className="py-8 text-center text-xs text-slate-500">No notifications have been returned.</p>}</div></NotificationPanel></div>;
 }
@@ -915,70 +1059,103 @@ function LiveAssignments() {
   type Recommendation = { agentId: string; name: string; activeTickets: number; urgentTickets: number; skillLevel: number; score: number; reasons: string[] };
   const { analytics } = useAnalytics("admin");
   const [tickets, setTickets] = useState<ApiTicket[]>([]);
+  const [agents, setAgents] = useState<Array<{ id: string; fullName: string; isActive: boolean }>>([]);
   const [ticketId, setTicketId] = useState("");
+  const [agentId, setAgentId] = useState("");
   const [recommendationResult, setRecommendationResult] = useState<{ ticketId: string; items: Recommendation[]; error?: string } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [assigning, setAssigning] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const assignmentInFlight = useRef(false);
+
+  const fetchQueue = useCallback(() => Promise.all([
+    apiRequest<{ items: ApiTicket[] }>("/tickets?page=1&limit=100"),
+    apiRequest<{ items: Array<{ id: string; fullName: string; isActive: boolean }> }>("/users?role=AGENT&page=1&limit=100"),
+  ]), []);
 
   const loadQueue = useCallback(async () => {
+    setLoading(true);
+    setError("");
     try {
-      const ticketResult = await apiRequest<{ items: ApiTicket[] }>("/tickets?page=1&limit=100&assigned=unassigned");
+      const [ticketResult, agentResult] = await fetchQueue();
       setTickets(ticketResult.items);
+      const activeAgents = agentResult.items.filter((agent) => agent.isActive);
+      setAgents(activeAgents);
       setTicketId((current) => ticketResult.items.some((item) => item.id === current) ? current : ticketResult.items[0]?.id ?? "");
+      setAgentId((current) => activeAgents.some((agent) => agent.id === current) ? current : activeAgents[0]?.id ?? "");
     } catch (requestError) {
       setError(errorMessage(requestError));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [fetchQueue]);
 
   useEffect(() => {
     let active = true;
-    apiRequest<{ items: ApiTicket[] }>("/tickets?page=1&limit=100&assigned=unassigned")
-      .then((result) => {
+    fetchQueue()
+      .then(([ticketResult, agentResult]) => {
         if (!active) return;
-        setTickets(result.items);
-        setTicketId((current) => result.items.some((item) => item.id === current) ? current : result.items[0]?.id ?? "");
+        setTickets(ticketResult.items);
+        const activeAgents = agentResult.items.filter((agent) => agent.isActive);
+        setAgents(activeAgents);
+        setTicketId((current) => ticketResult.items.some((item) => item.id === current) ? current : ticketResult.items[0]?.id ?? "");
+        setAgentId((current) => activeAgents.some((agent) => agent.id === current) ? current : activeAgents[0]?.id ?? "");
       })
       .catch((requestError: unknown) => { if (active) setError(errorMessage(requestError)); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, []);
+  }, [fetchQueue]);
 
   useEffect(() => {
-    if (!ticketId) return;
+    const refreshOnRealtimeUpdate = () => { void loadQueue(); };
+    window.addEventListener(REALTIME_UPDATE_EVENT, refreshOnRealtimeUpdate);
+    return () => window.removeEventListener(REALTIME_UPDATE_EVENT, refreshOnRealtimeUpdate);
+  }, [loadQueue]);
+
+  const [recommendationVersion, setRecommendationVersion] = useState(0);
+  const selectedTicket = tickets.find((ticket) => ticket.id === ticketId);
+  const selectedAgentId = selectedTicket?.assignedAgent?.id;
+  useEffect(() => {
+    if (!ticketId || selectedAgentId) return;
     let active = true;
     apiRequest<{ recommendations: Recommendation[] }>(`/assignments/tickets/${encodeURIComponent(ticketId)}/recommendations`)
       .then((result) => { if (active) setRecommendationResult({ ticketId, items: result.recommendations }); })
       .catch((requestError: unknown) => { if (active) setRecommendationResult({ ticketId, items: [], error: errorMessage(requestError) }); });
     return () => { active = false; };
-  }, [ticketId]);
+  }, [recommendationVersion, selectedAgentId, ticketId]);
 
   async function assign(agentId: string) {
-    if (!ticketId) return;
+    if (!ticketId || !agentId || assignmentInFlight.current) return;
+    assignmentInFlight.current = true;
+    setAssigning(true);
     setLoading(true);
     setError("");
     setSuccess("");
     try {
       await apiJson(`/assignments/tickets/${encodeURIComponent(ticketId)}/assign`, "POST", { agentId });
-      setSuccess("Ticket assigned.");
+      const wasAssigned = tickets.find((ticket) => ticket.id === ticketId)?.assignedAgent;
+      setSuccess(wasAssigned ? "Ticket reassigned." : "Ticket assigned.");
+      setRecommendationResult(null);
+      setRecommendationVersion((version) => version + 1);
       await loadQueue();
     } catch (requestError) {
       setError(errorMessage(requestError));
+    } finally {
+      assignmentInFlight.current = false;
+      setAssigning(false);
     }
   }
 
-  const selectedTicket = tickets.find((ticket) => ticket.id === ticketId);
   const currentRecommendation = recommendationResult?.ticketId === ticketId ? recommendationResult : null;
   const recommendations = currentRecommendation?.items ?? [];
-  const recommending = Boolean(ticketId) && !currentRecommendation;
+  const recommending = Boolean(ticketId) && !selectedTicket?.assignedAgent && !currentRecommendation;
   return <div className="space-y-5">
     {error && <p role="alert" className="rounded-lg bg-rose-50 p-3 text-xs text-rose-700">{error}</p>}
     {success && <p role="status" className="rounded-lg bg-emerald-50 p-3 text-xs text-emerald-700">{success}</p>}
-    <Panel title="Unassigned ticket queue" subtitle="Tickets and assignee recommendations come from the API.">{loading ? <LoadingState label="Loading unassigned tickets" /> : tickets.length ? <label className="block text-xs font-semibold text-slate-700">Ticket<select value={ticketId} onChange={(event) => setTicketId(event.target.value)} className={inputClass}>{tickets.map((ticket) => <option key={ticket.id} value={ticket.id}>{ticket.ticketCode} · {ticket.subject}</option>)}</select></label> : <p className="text-xs text-slate-500">No unassigned tickets were returned.</p>}</Panel>
+    <Panel title="Ticket assignment queue" subtitle="Assign or reassign tickets using current records from the API.">{loading ? <LoadingState label="Loading tickets and agents" /> : tickets.length ? <div className="grid gap-4 sm:grid-cols-2"><label className="block text-xs font-semibold text-slate-700">Ticket<select value={ticketId} onChange={(event) => setTicketId(event.target.value)} className={inputClass}>{tickets.map((ticket) => <option key={ticket.id} value={ticket.id}>{ticket.ticketCode} · {ticket.subject} — {ticket.assignedAgent?.fullName ?? "Unassigned"}</option>)}</select></label>{agents.length ? <label className="block text-xs font-semibold text-slate-700">Agent<select value={agentId} onChange={(event) => setAgentId(event.target.value)} className={inputClass}>{agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.fullName}</option>)}</select></label> : <p role="status" className="self-end text-xs text-slate-500">No active agents are available for assignment.</p>}<div className="sm:col-span-2"><p className="text-[10px] text-slate-500">Current assignment: {selectedTicket?.assignedAgent?.fullName ?? "Unassigned"}</p><button type="button" disabled={!agentId || assigning || selectedTicket?.assignedAgent?.id === agentId} onClick={() => void assign(agentId)} className="mt-3 rounded-lg bg-blue-600 px-3 py-2 text-[10px] font-semibold text-white disabled:opacity-50">{assigning ? "Saving assignment…" : selectedTicket?.assignedAgent ? "Reassign ticket" : "Assign ticket"}</button></div></div> : <p className="text-xs text-slate-500">{agents.length ? "No tickets were returned." : "No active agents are available for assignment."}</p>}</Panel>
     <Panel title="Assignment recommendations" subtitle={selectedTicket ? `${selectedTicket.ticketCode} · Recommendation scores are calculated by the backend.` : "Select an unassigned ticket to load recommendations."}>
-      {currentRecommendation?.error ? <p role="alert" className="text-xs text-rose-700">{currentRecommendation.error}</p> : recommending ? <LoadingState label="Calculating recommendations" /> : recommendations.length ? <div className="space-y-3">{recommendations.map((recommendation) => <article key={recommendation.agentId} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-100 p-4"><div><p className="text-xs font-bold text-slate-800">{recommendation.name} · score {recommendation.score}</p><p className="mt-1 text-[10px] text-slate-500">{recommendation.activeTickets} active · {recommendation.urgentTickets} urgent · skill level {recommendation.skillLevel}</p><p className="mt-1 text-[10px] text-slate-500">{recommendation.reasons.join(" · ")}</p></div><button type="button" onClick={() => void assign(recommendation.agentId)} className="rounded-lg bg-blue-600 px-3 py-2 text-[10px] font-semibold text-white">Assign ticket</button></article>)}</div> : !loading && selectedTicket ? <p className="text-xs text-slate-500">No eligible active agents were recommended.</p> : null}
+      {selectedTicket?.assignedAgent ? <p className="text-xs text-slate-500">This ticket is assigned. Use the assignment controls above to reassign it; recommendations are calculated for unassigned tickets.</p> : currentRecommendation?.error ? <p role="alert" className="text-xs text-rose-700">{currentRecommendation.error}</p> : recommending ? <LoadingState label="Calculating recommendations" /> : recommendations.length ? <div className="space-y-3">{recommendations.map((recommendation) => <article key={recommendation.agentId} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-100 p-4"><div><p className="text-xs font-bold text-slate-800">{recommendation.name} · score {recommendation.score}</p><p className="mt-1 text-[10px] text-slate-500">{recommendation.activeTickets} active · {recommendation.urgentTickets} urgent · skill level {recommendation.skillLevel}</p><p className="mt-1 text-[10px] text-slate-500">{recommendation.reasons.join(" · ")}</p></div><button type="button" disabled={assigning} onClick={() => void assign(recommendation.agentId)} className="rounded-lg bg-blue-600 px-3 py-2 text-[10px] font-semibold text-white disabled:opacity-50">Assign ticket</button></article>)}</div> : !loading && selectedTicket ? <p className="text-xs text-slate-500">No eligible active agents were recommended.</p> : null}
     </Panel>
     <FairnessPanel workload={analytics?.agentWorkload ?? []} />
   </div>;

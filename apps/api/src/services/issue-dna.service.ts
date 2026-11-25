@@ -180,10 +180,8 @@ export async function listIncidentGroups(actor: TicketActor) {
   const skills = actor.role === UserRole.AGENT
     ? await prisma.agentSkill.findMany({ where: { userId: actor.userId }, select: { domain: true, category: true } })
     : [];
-  const ticketAccess = actor.role === UserRole.ADMIN
-    ? undefined
-    : {
-      some: {
+  const ticketAccess = actor.role === UserRole.ADMIN ? undefined : {
+      every: {
         ticket: {
           OR: [
             { assignedAgentId: actor.userId },

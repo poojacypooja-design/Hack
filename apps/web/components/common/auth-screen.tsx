@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { Activity, ArrowLeft, ArrowRight, Eye, EyeOff, ShieldCheck } from "lucide-react";
 import { FormInput } from "@/components/ui/primitives";
 import { apiJson, errorMessage, roleHome, type ApiRole, type ApiUser } from "@/lib/api";
@@ -18,11 +18,13 @@ export function AuthScreen({ role = "customer", mode = "login" }: { role?: AuthR
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [email, setEmail] = useState("");
+  const submissionInFlight = useRef(false);
   const title = view === "forgot" ? "Reset your password" : mode === "register" ? "Create your account" : role === "customer" ? "Welcome back" : role === "agent" ? "Agent sign in" : "Admin sign in";
   const workspace = role === "customer" ? "/customer" : `/${role}`;
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (submissionInFlight.current) return;
     setError("");
     setMessage("");
     if (view === "forgot") {
@@ -31,6 +33,7 @@ export function AuthScreen({ role = "customer", mode = "login" }: { role?: AuthR
     }
 
     const formData = new FormData(event.currentTarget);
+    submissionInFlight.current = true;
     setLoading(true);
     try {
       const path = mode === "register"
@@ -50,6 +53,7 @@ export function AuthScreen({ role = "customer", mode = "login" }: { role?: AuthR
     } catch (requestError) {
       setError(errorMessage(requestError));
       setLoading(false);
+      submissionInFlight.current = false;
     }
   }
 

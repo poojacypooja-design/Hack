@@ -1,4 +1,24 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api";
+function isLocalHostname(hostname: string) {
+  const normalized = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  return normalized === "localhost"
+    || normalized.endsWith(".localhost")
+    || normalized === "::1"
+    || normalized === "0.0.0.0"
+    || /^127(?:\.\d{1,3}){3}$/.test(normalized);
+}
+
+export function getApiBaseUrl() {
+  const configuredUrl = process.env.NEXT_PUBLIC_API_URL?.trim();
+  const baseUrl = configuredUrl || (process.env.NODE_ENV === "development" ? "http://localhost:4000/api" : "");
+  if (!baseUrl) {
+    throw new Error("NEXT_PUBLIC_API_URL must be configured outside development.");
+  }
+  const parsedUrl = new URL(baseUrl);
+  if (process.env.NODE_ENV === "production" && (parsedUrl.protocol !== "https:" || isLocalHostname(parsedUrl.hostname))) {
+    throw new Error("Production NEXT_PUBLIC_API_URL must use HTTPS and a non-localhost hostname.");
+  }
+  return baseUrl.replace(/\/+$/, "");
+}
 
 type ApiEnvelope<T> = {
   success: true;
@@ -37,7 +57,7 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
   }
   headers.set("Accept", "application/json");
 
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await fetch(`${getApiBaseUrl()}${path}`, {
     ...init,
     headers,
     credentials: "include",
@@ -146,6 +166,7 @@ export type ApiAttachment = {
 export type ApiAnalytics = {
   totalTickets: number;
   openTickets: number;
+  inProgressTickets: number;
   resolvedTickets: number;
   slaCompliance: number;
   slaBreaches: number;

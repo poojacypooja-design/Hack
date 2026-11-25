@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { apiRequest, displayPriority, displayStatus, type ApiTicket } from "@/lib/api";
 import type { Ticket } from "@/lib/mock-data";
+import { REALTIME_UPDATE_EVENT } from "@/lib/realtime";
 
 type Role = "customer" | "agent" | "admin";
 type ListMode = "mine" | "unassigned";
@@ -19,22 +20,25 @@ export function useTicketList(role: Role, mode?: ListMode) {
     const endpoint = role === "agent"
       ? mode === "unassigned" ? "/tickets/unassigned" : "/tickets/assigned"
       : "/tickets";
-
-    apiRequest<TicketPage>(`${endpoint}?page=1&limit=100`)
-      .then((result) => {
+    const loadTickets = async () => {
+      try {
+        const result = await apiRequest<TicketPage>(`${endpoint}?page=1&limit=100`);
         if (!active) return;
         setTickets(result.items);
         setTotal(result.total);
-      })
-      .catch((requestError: unknown) => {
+        setError("");
+      } catch (requestError) {
         if (active) setError(requestError instanceof Error ? requestError.message : "Could not load tickets.");
-      })
-      .finally(() => {
+      } finally {
         if (active) setLoading(false);
-      });
-
+      }
+    };
+    const refreshOnRealtimeUpdate = () => { void loadTickets(); };
+    void loadTickets();
+    window.addEventListener(REALTIME_UPDATE_EVENT, refreshOnRealtimeUpdate);
     return () => {
       active = false;
+      window.removeEventListener(REALTIME_UPDATE_EVENT, refreshOnRealtimeUpdate);
     };
   }, [mode, role]);
 

@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { ArrowDownUp, ChevronDown } from "lucide-react";
-import { demoTickets, type Ticket } from "@/lib/mock-data";
+import type { Ticket } from "@/lib/mock-data";
 import { FilterPanel, SearchBar } from "@/components/ui/primitives";
 
 export function TicketTable({
@@ -26,7 +26,7 @@ export function TicketTable({
   const [priority, setPriority] = useState("All priorities");
   const [sortNewest, setSortNewest] = useState(true);
   const tickets = useMemo(() => {
-    return (liveTickets ?? demoTickets)
+    return (liveTickets ?? [])
       .filter((ticket) => mode !== "unassigned" || ticket.agent === "Unassigned")
       .filter((ticket) => mode !== "mine" || ticket.agent !== "Unassigned")
       .filter((ticket) => `${ticket.id} ${ticket.subject} ${ticket.customer} ${ticket.category}`.toLowerCase().includes(query.toLowerCase()))
@@ -34,7 +34,6 @@ export function TicketTable({
       .filter((ticket) => priority === "All priorities" || ticket.priority === priority)
       .sort((a, b) => sortNewest ? a.id.localeCompare(b.id) * -1 : a.id.localeCompare(b.id));
   }, [liveTickets, mode, priority, query, sortNewest, status]);
-  const isLive = liveTickets !== undefined;
   return (
     <div>
       {!compact && <div className="mb-4"><FilterPanel>
@@ -59,9 +58,13 @@ export function TicketTable({
             </tr>
           ))}</tbody>
         </table>
-        {tickets.length === 0 && <p className="py-12 text-center text-sm text-slate-500">No tickets match those filters.</p>}
+        {tickets.length === 0 && <p className="py-12 text-center text-sm text-slate-500">
+          {total === 0
+            ? mode === "customer" ? "You have not created a support ticket yet." : mode === "mine" ? "No tickets are assigned to you yet." : mode === "unassigned" ? "No authorized unassigned tickets are available." : "No support tickets have been created."
+            : "No tickets match those filters."}
+        </p>}
       </div>
-      {!compact && <div className="flex items-center justify-between pt-4 text-[10px] text-slate-400"><span>{isLive ? `Showing ${tickets.length} of ${total ?? tickets.length} tickets` : `Showing ${tickets.length} sample tickets`}</span>{!isLive && <span className="rounded-full bg-amber-50 px-2.5 py-1 font-semibold text-amber-700">Demo data</span>}</div>}
+      {!compact && <div className="flex items-center justify-between pt-4 text-[10px] text-slate-400"><span>{`Showing ${tickets.length} of ${total ?? tickets.length} tickets`}</span></div>}
     </div>
   );
 }
