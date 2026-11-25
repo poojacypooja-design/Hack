@@ -147,7 +147,13 @@ export async function listTickets(actor: TicketActor, query: ListTicketsQuery) {
         customer: { select: assignmentSelect },
         assignedAgent: { select: assignmentSelect },
         slaRecord: {
-          select: { firstResponseDueAt: true, resolutionDueAt: true, firstResponseAt: true, resolvedAt: true },
+          select: {
+            firstResponseDueAt: true,
+            resolutionDueAt: true,
+            firstResponseAt: true,
+            resolvedAt: true,
+            policy: { select: { firstResponseMinutes: true, resolutionMinutes: true } },
+          },
         },
         _count: { select: { messages: true, attachments: true } },
       },
@@ -205,7 +211,18 @@ export async function getTicketDetails(ticketId: string, actor: TicketActor) {
         include: { actor: { select: { id: true, fullName: true, role: true } } },
       },
       slaRecord: { include: { policy: true } },
-      feedback: actor.role === UserRole.CUSTOMER,
+      feedback: {
+        select: {
+          rating: true,
+          agentRating: true,
+          communicationRating: true,
+          resolutionRating: true,
+          comment: true,
+          suggestions: true,
+          createdAt: true,
+          agent: { select: { id: true, fullName: true } },
+        },
+      },
     },
   });
   if (!ticket) throw new ApiError(404, "TICKET_NOT_FOUND", "The ticket was not found.");
@@ -434,19 +451,58 @@ export async function getAttachment(ticketId: string, attachmentId: string, acto
 export async function submitFeedback(
   ticketId: string,
   actor: TicketActor,
-  input: { rating: number; comment?: string },
+  input: {
+    rating: number;
+    agentRating: number;
+    communicationRating: number;
+    resolutionRating: number;
+    comment?: string;
+    suggestions?: string;
+  },
 ) {
   if (actor.role !== UserRole.CUSTOMER) {
     throw new ApiError(403, "FORBIDDEN", "Only the ticket's customer can submit feedback.");
   }
   await assertTicketAccess(ticketId, actor);
-  const ticket = await prisma.ticket.findUnique({ where: { id: ticketId }, select: { status: true } });
+  const ticket = await prisma.ticket.findUnique({
+    where: { id: ticketId },
+    select: { status: true, ticketCode: true, assignedAgentId: true },
+  });
   if (!ticket || (ticket.status !== TicketStatus.RESOLVED && ticket.status !== TicketStatus.CLOSED)) {
     throw new ApiError(409, "TICKET_NOT_RESOLVED", "Feedback is available after a ticket is resolved.");
   }
-  return prisma.ticketFeedback.upsert({
+  const feedback = await prisma.ticketFeedback.upsert({
     where: { ticketId },
-    update: { rating: input.rating, comment: input.comment ?? null },
-    create: { ticketId, customerId: actor.userId, rating: input.rating, comment: input.comment ?? null },
+    update: {
+      rating: input.rating,
+      agentRating: input.agentRating,
+      communicationRating: input.communicationRating,
+      resolutionRating: input.resolutionRating,
+      comment: input.comment ?? null,
+      suggestions: input.suggestions ?? null,
+    },
+    create: {
+      ticketId,
+      customerId: actor.userId,
+      agentId: ticket.assignedAgentId,
+      rating: input.rating,
+      agentRating: input.agentRating,
+      communicationRating: input.communicationRating,
+      resolutionRating: input.resolutionRating,
+      comment: input.comment ?? null,
+      suggestions: input.suggestions ?? null,
+    },
   });
+  const notice = {
+    ticketId,
+    type: NotificationType.CUSTOMER_FEEDBACK,
+    title: `Customer feedback received · ${ticket.ticketCode}`,
+    body: "A customer submitted feedback for a resolved support ticket.",
+    dedupeKey: `customer-feedback:${ticketId}`,
+  };
+  if (feedback.agentId) {
+    await createNotification({ ...notice, userId: feedback.agentId });
+  }
+  await notifyAdministrators(notice);
+  return feedback;
 }

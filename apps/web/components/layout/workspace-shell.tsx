@@ -33,6 +33,7 @@ import { navGroups } from "@/lib/mock-data";
 import { apiRequest, errorMessage, roleHome, type ApiRole } from "@/lib/api";
 import { getRealtimeSocket, REALTIME_UPDATE_EVENT } from "@/lib/realtime";
 import { useSession } from "@/lib/use-session";
+import { SlaAudioAlerts } from "@/components/common/sla-audio-alerts";
 
 type Role = "customer" | "agent" | "admin";
 
@@ -194,6 +195,7 @@ export function WorkspaceShell({
             <div className="sm:hidden"><p className="text-sm font-bold text-slate-800">SOLVEX</p><p className="text-[9px] capitalize text-slate-400">{role} workspace</p></div>
           </div>
           <div className="flex items-center gap-2 sm:gap-4">
+            {user?.id && <SlaAudioAlerts role={role} userId={user.id} />}
             <label className="relative hidden md:block"><Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" /><input placeholder="Search anything…" className="h-9 w-[205px] rounded-lg border border-slate-200 bg-slate-50 pl-9 pr-3 text-[11px] outline-none focus:border-blue-300 focus:bg-white" /></label>
             <span role="status" aria-label={`Live updates ${realtimeStatus}`} title={`Live updates ${realtimeStatus}`} className={`hidden items-center gap-1.5 text-[9px] font-medium sm:flex ${realtimeStatus === "connected" ? "text-emerald-700" : "text-slate-400"}`}><i className={`h-1.5 w-1.5 rounded-full ${realtimeStatus === "connected" ? "bg-emerald-500" : "bg-slate-300"}`} />Live</span>
             <Link href={`/${role}/notifications`} aria-label="Notifications" className="relative grid h-9 w-9 place-items-center rounded-lg border border-slate-200 text-slate-500 transition hover:bg-slate-50"><Bell size={16} /></Link>

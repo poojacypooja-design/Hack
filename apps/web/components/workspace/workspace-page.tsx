@@ -20,6 +20,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   Sparkles,
+  Timer,
   UsersRound,
 } from "lucide-react";
 import { agents, categoriesByDomain, demoTickets } from "@/lib/mock-data";
@@ -27,13 +28,14 @@ import { CategoryChart, Panel, RiskCard, StatCard, VolumeChart } from "@/compone
 import { DashboardHeader } from "@/components/common/dashboard-header";
 import { PriorityBadge, StatusBadge, TicketTable } from "@/components/common/ticket-table";
 import { Modal, NotificationPanel, TicketTimeline } from "@/components/ui/primitives";
-import { apiJson, apiRequest, displayDomain, displayPriority, displayStatus, errorMessage, getApiBaseUrl, type ApiAnalytics, type ApiTicket, type ApiTicketHistory, type ApiTicketMessage } from "@/lib/api";
+import { apiJson, apiRequest, displayDomain, displayPriority, displayStatus, errorMessage, getApiBaseUrl, type ApiAnalytics, type ApiSlaRisk, type ApiTicket, type ApiTicketHistory, type ApiTicketMessage } from "@/lib/api";
 import { toTicketView, useTicketList } from "@/lib/tickets";
 import { LoadingState } from "@/components/ui/primitives";
 import { useAnalytics } from "@/lib/use-analytics";
 import { useSlaRisks } from "@/lib/use-sla-risks";
 import { useSession } from "@/lib/use-session";
 import { getRealtimeSocket, REALTIME_UPDATE_EVENT } from "@/lib/realtime";
+import { SlaCountdown } from "@/components/common/sla-countdown";
 
 type Role = "customer" | "agent" | "admin";
 
@@ -208,7 +210,7 @@ function LiveOverview({ role }: { role: Role }) {
       { label: "Total tickets", value: analytics ? String(analytics.totalTickets) : "—", icon: FileText, tone: "blue" as const, caption: "API total" },
       { label: "Open tickets", value: analytics ? String(analytics.openTickets) : "—", icon: Activity, tone: "violet" as const, caption: "API total" },
       { label: "Resolved", value: analytics ? String(analytics.resolvedTickets) : "—", icon: CheckCircle2, tone: "teal" as const, caption: "API total" },
-      { label: "SLA compliance", value: analytics ? `${analytics.slaCompliance}%` : "—", icon: ShieldCheck, tone: "amber" as const, caption: "API metric" },
+      { label: "SLA compliance", value: analytics?.slaCompliance === null ? "Insufficient data" : analytics ? `${analytics.slaCompliance}%` : "—", icon: ShieldCheck, tone: "amber" as const, caption: "Completed SLAs" },
     ]
     : isAgent
       ? [
@@ -252,9 +254,10 @@ function LiveOverview({ role }: { role: Role }) {
         <Panel title="Your priority queue" subtitle="Assigned tickets returned by the API" action={<Link href="/agent/assigned" className="text-xs font-semibold text-blue-600">View queue →</Link>}>{ticketsLoading ? <LoadingState label="Loading assigned tickets" /> : ticketsError ? <p role="alert" className="text-xs text-rose-700">{ticketsError}</p> : <TicketTable compact mode="mine" hrefPrefix="/agent/tickets" tickets={tickets.map(toTicketView)} total={total} />}</Panel>
         <NoSilenceCard />
       </div>}
+      {isAgent && analytics && <AgentFeedbackPanel analytics={analytics} />}
       {role === "customer" && <Panel title="Recent tickets" subtitle="Your latest support requests" action={<Link href="/customer/tickets" className="text-xs font-semibold text-blue-600">View all tickets →</Link>}>{ticketsLoading ? <LoadingState label="Loading tickets" /> : ticketsError ? <p role="alert" className="text-xs text-rose-700">{ticketsError}</p> : <TicketTable compact mode="customer" tickets={tickets.map(toTicketView)} total={total} />}</Panel>}
       {isAdmin && analytics && <div className="grid gap-5 lg:grid-cols-2">
-        <Panel title="SLA health" subtitle="Compliance reported by the analytics API"><p className="text-3xl font-bold text-slate-900">{analytics.slaCompliance}%</p><p className="mt-2 text-xs text-slate-500">{analytics.slaBreaches} recorded SLA breaches</p></Panel>
+        <Panel title="SLA health" subtitle="Completed SLA records only"><p className="text-3xl font-bold text-slate-900">{analytics.slaCompliance === null ? "Insufficient data" : `${analytics.slaCompliance}%`}</p><p className="mt-2 text-xs text-slate-500">{analytics.slaBreaches} recorded SLA breaches</p></Panel>
         <RiskCard />
       </div>}
     </>
@@ -269,6 +272,51 @@ function TicketList({ role, mode }: { role: Role; mode?: "mine" | "unassigned" }
     <Panel title={role === "agent" ? mode === "unassigned" ? "Authorized unassigned tickets" : "Your assigned tickets" : role === "customer" ? "My support tickets" : "All support tickets"} subtitle="Ticket visibility is enforced by the API for your signed-in role.">
       <div className="mb-4 flex gap-2 border-b border-slate-100 pb-3">{["all", "open", "in progress", "resolved"].map((item) => <button key={item} onClick={() => setView(item)} className={`rounded-full px-3 py-1.5 text-[10px] font-semibold capitalize ${view === item ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-500 hover:bg-slate-200"}`}>{item}</button>)}</div>
       {loading ? <LoadingState label="Loading tickets" /> : error ? <p role="alert" className="rounded-lg bg-rose-50 p-3 text-xs text-rose-700">{error}</p> : <TicketTable key={`${view}-${mode ?? role}`} mode={mode ?? (role === "customer" ? "customer" : "default")} initialStatus={statusFilter} hrefPrefix={`/${role}/tickets`} tickets={tickets.map(toTicketView)} total={total} />}
+    </Panel>
+  );
+}
+
+function RatingControl({ label, value, onChange }: { label: string; value: number; onChange: (rating: number) => void }) {
+  const descriptions = ["Very poor", "Poor", "Average", "Good", "Excellent"];
+  return (
+    <fieldset>
+      <legend className="mb-1.5 text-[10px] font-semibold text-slate-600">{label}</legend>
+      <div className="flex items-center gap-1">
+        {[1, 2, 3, 4, 5].map((rating) => (
+          <button
+            type="button"
+            key={rating}
+            onClick={() => onChange(rating)}
+            aria-label={`${label}: ${rating} star${rating === 1 ? "" : "s"}`}
+            aria-pressed={value === rating}
+            className={`grid h-8 w-8 place-items-center rounded-full text-sm ${value >= rating ? "bg-amber-100 text-amber-600" : "bg-slate-100 text-slate-400"}`}
+          >★</button>
+        ))}
+        <span className="ml-1 text-[9px] text-slate-500">{value ? `${value}/5 · ${descriptions[value - 1]}` : "Choose 1–5"}</span>
+      </div>
+    </fieldset>
+  );
+}
+
+function AgentFeedbackPanel({ analytics }: { analytics: ApiAnalytics }) {
+  const satisfaction = analytics.customerSatisfaction;
+  const fiveStar = satisfaction.ratingDistribution.find((item) => item.rating === 5)?.count ?? 0;
+  const lowRatings = satisfaction.ratingDistribution
+    .filter((item) => item.rating <= 2)
+    .reduce((sum, item) => sum + item.count, 0);
+  return (
+    <Panel title="Customer feedback" subtitle="Feedback for tickets attributed to your agent account.">
+      <div className="grid gap-3 sm:grid-cols-5">
+        <div><p className="text-[10px] text-slate-500">Average satisfaction</p><p className="mt-1 text-lg font-bold text-slate-800">{satisfaction.feedbackCount ? `${satisfaction.averageRating.toFixed(2)} / 5` : "—"}</p></div>
+        <div><p className="text-[10px] text-slate-500">Average agent service</p><p className="mt-1 text-lg font-bold text-slate-800">{satisfaction.feedbackCount ? `${satisfaction.averageAgentRating.toFixed(2)} / 5` : "—"}</p></div>
+        <div><p className="text-[10px] text-slate-500">Responses</p><p className="mt-1 text-lg font-bold text-slate-800">{satisfaction.feedbackCount}</p></div>
+        <div><p className="text-[10px] text-slate-500">5-star ratings</p><p className="mt-1 text-lg font-bold text-emerald-700">{fiveStar}</p></div>
+        <div><p className="text-[10px] text-slate-500">Low ratings (1–2)</p><p className="mt-1 text-lg font-bold text-rose-700">{lowRatings}</p></div>
+      </div>
+      {satisfaction.feedbackCount === 0
+        ? <p className="mt-4 text-xs text-slate-500">No agent-attributed feedback has been submitted yet.</p>
+        : <ul className="mt-4 space-y-2">{satisfaction.recentFeedback.map((item) => <li key={`${item.ticket.id}:${item.createdAt}`} className="rounded-lg bg-slate-50 p-3"><div className="flex justify-between gap-3"><Link href={`/agent/tickets/${item.ticket.id}`} className="text-xs font-semibold text-blue-700 hover:underline">{item.ticket.ticketCode}</Link><span className="text-[10px] text-slate-500">{item.rating}/5 · {new Date(item.createdAt).toLocaleDateString()}</span></div>{item.comment && <p className="mt-2 text-xs text-slate-600">{item.comment}</p>}</li>)}</ul>}
+      {satisfaction.trend.length > 0 && <p className="mt-4 text-[10px] text-slate-500">Recent CSAT trend: {satisfaction.trend.slice(-7).map((item) => `${item.day} ${item.csatPercent ?? "—"}% (n=${item.responses})`).join(" · ")}</p>}
     </Panel>
   );
 }
@@ -410,7 +458,13 @@ function TicketDetail({ role, ticketId, onAction }: { role: Role; ticketId: stri
   const [reply, setReply] = useState("");
   const [noteMode, setNoteMode] = useState(false);
   const [feedback, setFeedback] = useState(0);
+  const [agentRating, setAgentRating] = useState(0);
+  const [communicationRating, setCommunicationRating] = useState(0);
+  const [resolutionRating, setResolutionRating] = useState(0);
   const [feedbackComment, setFeedbackComment] = useState("");
+  const [feedbackSuggestions, setFeedbackSuggestions] = useState("");
+  const [slaRisk, setSlaRisk] = useState<ApiSlaRisk | null>(null);
+  const [slaRiskError, setSlaRiskError] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [actionError, setActionError] = useState("");
@@ -431,11 +485,23 @@ function TicketDetail({ role, ticketId, onAction }: { role: Role; ticketId: stri
       const result = await fetchTicketDetails(role, ticketId);
       setTicket(result.ticket);
       setFeedback(result.ticket.feedback?.rating ?? 0);
+      setAgentRating(result.ticket.feedback?.agentRating ?? 0);
+      setCommunicationRating(result.ticket.feedback?.communicationRating ?? 0);
+      setResolutionRating(result.ticket.feedback?.resolutionRating ?? 0);
       setFeedbackComment(result.ticket.feedback?.comment ?? "");
+      setFeedbackSuggestions(result.ticket.feedback?.suggestions ?? "");
       setSimilar(result.similar);
       setSimilarError(result.similarError);
       setSuggestions(result.suggestions);
       setSuggestionsError(result.suggestionsError);
+      if (role !== "customer") {
+        try {
+          setSlaRisk(await apiRequest<ApiSlaRisk>(`/sla/tickets/${encodeURIComponent(ticketId)}`));
+          setSlaRiskError("");
+        } catch (requestError) {
+          setSlaRiskError(errorMessage(requestError));
+        }
+      }
     } catch (requestError) {
       setError(errorMessage(requestError));
     } finally {
@@ -475,7 +541,11 @@ function TicketDetail({ role, ticketId, onAction }: { role: Role; ticketId: stri
         if (!active) return;
         setTicket(result.ticket);
         setFeedback(result.ticket.feedback?.rating ?? 0);
+        setAgentRating(result.ticket.feedback?.agentRating ?? 0);
+        setCommunicationRating(result.ticket.feedback?.communicationRating ?? 0);
+        setResolutionRating(result.ticket.feedback?.resolutionRating ?? 0);
         setFeedbackComment(result.ticket.feedback?.comment ?? "");
+        setFeedbackSuggestions(result.ticket.feedback?.suggestions ?? "");
         setSimilar(result.similar);
         setSimilarError(result.similarError);
         setSuggestions(result.suggestions);
@@ -525,14 +595,18 @@ function TicketDetail({ role, ticketId, onAction }: { role: Role; ticketId: stri
   }
 
   async function submitFeedback() {
-    if (!ticket || feedback < 1 || actionInFlight.current) return;
+    if (!ticket || [feedback, agentRating, communicationRating, resolutionRating].some((rating) => rating < 1) || actionInFlight.current) return;
     actionInFlight.current = true;
     setActionSaving(true);
     setActionError("");
     try {
       await apiJson(`/tickets/${encodeURIComponent(ticket.id)}/feedback`, "POST", {
         rating: feedback,
+        agentRating,
+        communicationRating,
+        resolutionRating,
         ...(feedbackComment.trim() ? { comment: feedbackComment.trim() } : {}),
+        ...(feedbackSuggestions.trim() ? { suggestions: feedbackSuggestions.trim() } : {}),
       });
       setLoading(true);
       await loadTicket();
@@ -601,12 +675,20 @@ function TicketDetail({ role, ticketId, onAction }: { role: Role; ticketId: stri
   const dueAt = ticket.slaRecord
     ? ticket.slaRecord.firstResponseAt ? ticket.slaRecord.resolutionDueAt : ticket.slaRecord.firstResponseDueAt
     : null;
+  const targetMinutes = ticket.slaRecord?.firstResponseAt
+    ? ticket.slaRecord.policy?.resolutionMinutes
+    : ticket.slaRecord?.policy?.firstResponseMinutes;
 
   return (
     <>
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-blue-100 bg-blue-50/70 px-4 py-3"><div className="flex items-center gap-2 text-xs text-blue-900"><span className="font-bold">{ticket.ticketCode}</span><span>·</span><span>{ticket.category}</span></div><div className="flex items-center gap-2"><StatusBadge status={displayStatus(ticket.status)} /><PriorityBadge priority={displayPriority(ticket.priority)} /></div></div>
       <div className="grid gap-5 xl:grid-cols-[1.55fr_0.75fr]">
         <div className="space-y-5">
+          {role !== "customer" && ticket.feedback && <Panel title="Customer feedback" subtitle={`Submitted ${new Date(ticket.feedback.createdAt).toLocaleString()}`}>
+            <p className="text-xs font-semibold text-slate-800">Overall {ticket.feedback.rating}/5 · Agent {ticket.feedback.agentRating ?? "—"}/5 · Communication {ticket.feedback.communicationRating ?? "—"}/5 · Resolution {ticket.feedback.resolutionRating ?? "—"}/5</p>
+            {ticket.feedback.comment && <p className="mt-3 whitespace-pre-wrap text-xs text-slate-600">{ticket.feedback.comment}</p>}
+            {ticket.feedback.suggestions && <p className="mt-2 whitespace-pre-wrap text-xs text-slate-600"><b>Suggestion:</b> {ticket.feedback.suggestions}</p>}
+          </Panel>}
           <Panel title={ticket.subject} subtitle={`Created ${new Date(ticket.createdAt).toLocaleString()} by ${ticket.customer.fullName}`}>
             <p className="whitespace-pre-wrap text-sm leading-7 text-slate-600">{ticket.description}</p>
             <div className="mt-4 flex flex-wrap gap-2 text-[10px] text-slate-500"><span className="rounded-md bg-slate-100 px-2.5 py-1.5">Domain · {displayDomain(ticket.domain)}</span><span className="rounded-md bg-slate-100 px-2.5 py-1.5">Priority · {displayPriority(ticket.priority)}</span><span className="rounded-md bg-slate-100 px-2.5 py-1.5">{ticket.attachments?.length ?? 0} attachments</span></div>
@@ -621,12 +703,29 @@ function TicketDetail({ role, ticketId, onAction }: { role: Role; ticketId: stri
             </form>
             {actionError && <p role="alert" className="mt-3 rounded-lg bg-rose-50 p-3 text-xs text-rose-700">{actionError}</p>}
           </Panel>
-          {(ticket.status === "RESOLVED" || ticket.status === "CLOSED") && role === "customer" && <Panel title="Was this resolution helpful?" subtitle={ticket.feedback ? "Your recorded feedback can be updated." : "Your feedback is submitted to the support team."}>{ticket.feedback && <p className="mb-3 text-xs text-slate-600">Current rating: {ticket.feedback.rating} / 5</p>}<div className="flex gap-2">{[1, 2, 3, 4, 5].map((rating) => <button type="button" key={rating} onClick={() => setFeedback(rating)} aria-label={`${rating} stars`} className={`grid h-9 w-9 place-items-center rounded-full text-sm ${feedback >= rating ? "bg-amber-100 text-amber-600" : "bg-slate-100 text-slate-400"}`}>★</button>)}</div><textarea value={feedbackComment} onChange={(event) => setFeedbackComment(event.target.value)} maxLength={2000} rows={3} placeholder="Optional feedback" className={`${inputClass} mt-3 h-auto py-2`} /><div className="mt-4 flex gap-2"><button type="button" disabled={!feedback || actionSaving} onClick={() => void submitFeedback()} className="rounded-lg bg-blue-600 px-3 py-2 text-[10px] font-semibold text-white disabled:opacity-50">{actionSaving ? "Saving…" : ticket.feedback ? "Update rating" : "Submit rating"}</button>{ticket.status === "RESOLVED" && <button type="button" disabled={actionSaving} onClick={() => void confirmResolution()} className="rounded-lg border border-slate-200 px-3 py-2 text-[10px] font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-50">Confirm resolution</button>}</div>{actionError && <p role="alert" className="mt-3 text-xs text-rose-700">{actionError}</p>}</Panel>}
+          {(ticket.status === "RESOLVED" || ticket.status === "CLOSED") && role === "customer" && <Panel title="Was this resolution helpful?" subtitle={ticket.feedback ? "Your recorded feedback can be updated." : "Your feedback is submitted to the support team."}>
+            {ticket.feedback && <p className="mb-3 text-xs text-slate-600">Current overall rating: {ticket.feedback.rating} / 5</p>}
+            <div className="grid gap-4 sm:grid-cols-2">
+              <RatingControl label="Overall satisfaction" value={feedback} onChange={setFeedback} />
+              <RatingControl label="Agent service" value={agentRating} onChange={setAgentRating} />
+              <RatingControl label="Communication" value={communicationRating} onChange={setCommunicationRating} />
+              <RatingControl label="Resolution quality" value={resolutionRating} onChange={setResolutionRating} />
+            </div>
+            <textarea value={feedbackComment} onChange={(event) => setFeedbackComment(event.target.value)} maxLength={2000} rows={3} placeholder="Optional written feedback" className={`${inputClass} mt-3 h-auto py-2`} />
+            <textarea value={feedbackSuggestions} onChange={(event) => setFeedbackSuggestions(event.target.value)} maxLength={2000} rows={2} placeholder="Optional suggestions for improvement" className={`${inputClass} mt-3 h-auto py-2`} />
+            <div className="mt-4 flex gap-2"><button type="button" disabled={[feedback, agentRating, communicationRating, resolutionRating].some((rating) => rating < 1) || actionSaving} onClick={() => void submitFeedback()} className="rounded-lg bg-blue-600 px-3 py-2 text-[10px] font-semibold text-white disabled:opacity-50">{actionSaving ? "Saving…" : ticket.feedback ? "Update feedback" : "Submit feedback"}</button>{ticket.status === "RESOLVED" && <button type="button" disabled={actionSaving} onClick={() => void confirmResolution()} className="rounded-lg border border-slate-200 px-3 py-2 text-[10px] font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-50">Confirm resolution</button>}</div>
+            {actionError && <p role="alert" className="mt-3 text-xs text-rose-700">{actionError}</p>}
+          </Panel>}
           <Panel title="Ticket activity" subtitle="History returned by the API; customer access is filtered by the server."><HistoryList items={ticket.history ?? []} /></Panel>
         </div>
         <div className="space-y-4">
           {role !== "customer" && <Panel title="Ticket status" subtitle="The API validates allowed status transitions."><select aria-label="Update ticket status" disabled={actionSaving} value={ticket.status} onChange={(event) => void changeStatus(event.target.value as ApiTicket["status"])} className={inputClass}><option value="OPEN">Open</option><option value="IN_PROGRESS">In progress</option><option value="WAITING_FOR_CUSTOMER">Waiting for customer</option><option value="RESOLVED">Resolved</option><option value="CLOSED">Closed</option></select></Panel>}
-          <Panel title="Ticket details"><DetailLine label="Assigned agent" value={ticket.assignedAgent?.fullName ?? "Unassigned"} /><DetailLine label="Updated" value={new Date(ticket.updatedAt).toLocaleString()} /><DetailLine label="SLA deadline" value={dueAt ? new Date(dueAt).toLocaleString() : "Unavailable"} /><DetailLine label="Ticket owner" value={ticket.customer.fullName} /></Panel>
+          <Panel title="Ticket details"><DetailLine label="Assigned agent" value={ticket.assignedAgent?.fullName ?? "Unassigned"} /><DetailLine label="Updated" value={new Date(ticket.updatedAt).toLocaleString()} /><DetailLine label="Ticket owner" value={ticket.customer.fullName} />
+            <div className="mt-3">
+              <SlaCountdown deadline={dueAt ?? null} targetMs={targetMinutes ? targetMinutes * 60_000 : null} status={ticket.status} resolvedAt={ticket.slaRecord?.resolvedAt} priority={ticket.priority} riskLevel={slaRisk?.level} />
+              {slaRiskError && <p role="status" className="mt-2 text-[10px] text-slate-500">Backend risk level unavailable: {slaRiskError}</p>}
+            </div>
+          </Panel>
           {role !== "customer" && <Panel title="Issue DNA" subtitle="Similarity results calculated by the API; review before grouping.">{similarError ? <p role="alert" className="text-xs text-rose-700">{similarError}</p> : similar?.matches.length ? <ul className="space-y-3">{similar.matches.map((match) => <li key={match.ticketId} className="rounded-lg bg-violet-50 p-3"><Link href={`/${role}/tickets/${match.ticketId}`} className="text-xs font-bold text-violet-800 hover:underline">{match.ticketCode} · {match.subject}</Link><p className="mt-1 text-[10px] text-slate-600">{match.similarity}% similarity · {match.matchedSignals.join(", ")}</p><button type="button" disabled={Boolean(groupingTicketId)} onClick={() => void groupSimilarTicket(match)} className="mt-2 rounded-md border border-violet-200 px-2.5 py-1.5 text-[9px] font-semibold text-violet-800 disabled:opacity-50">{groupingTicketId === match.ticketId ? "Grouping…" : "Create incident group"}</button></li>)}</ul> : <p className="text-xs text-slate-500">{similar ? "No similar tickets were returned." : "Loading similar tickets…"}</p>}{groupingError && <p role="alert" className="mt-3 text-xs text-rose-700">{groupingError}</p>}{groupingMessage && <p role="status" className="mt-3 text-xs text-emerald-700">{groupingMessage}</p>}</Panel>}
           {role !== "customer" && <Panel title="Resolution Memory" subtitle="Historical resolutions ranked by the API. Reuse a suggestion as an editable public reply.">{suggestionsError ? <p role="alert" className="text-xs text-rose-700">{suggestionsError}</p> : suggestions?.suggestions.length ? <ul className="space-y-3">{suggestions.suggestions.map((suggestion) => <li key={suggestion.id} className="rounded-lg border border-slate-100 p-3"><p className="text-xs font-semibold text-slate-800">{suggestion.title}</p><p className="mt-1 text-[10px] text-slate-500">{suggestion.ticket.ticketCode} · {suggestion.similarity}% similarity</p><p className="mt-2 whitespace-pre-wrap text-xs text-slate-600">{suggestion.solution}</p><button type="button" disabled={actionSaving} onClick={() => { setReply(suggestion.solution); setNoteMode(false); onAction("Resolution copied to the public reply draft."); }} className="mt-3 rounded-md border border-blue-100 px-2.5 py-1.5 text-[9px] font-semibold text-blue-700 disabled:opacity-50">Use in public reply</button></li>)}</ul> : <p className="text-xs text-slate-500">{suggestions ? "No matching saved resolutions are available." : "Loading saved resolutions…"}</p>}</Panel>}
         </div>
@@ -742,7 +841,7 @@ function SlaRiskDashboard({ role }: { role: "agent" | "admin" }) {
   return <>
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{levels.map((level) => <StatCard key={level} label={`${level} risk`} value={String(risks.filter((risk) => risk.level === level).length)} caption="API risk records" icon={level === "CRITICAL" ? ShieldAlert : Clock3} tone={level === "CRITICAL" || level === "HIGH" ? "rose" : level === "MEDIUM" ? "amber" : "teal"} />)}</div>
     <Panel title={role === "admin" ? "SLA Rescue Center" : "Approaching deadlines"} subtitle="Risk scores and recommended actions are returned by the SLA API.">
-      {loading ? <LoadingState label="Loading SLA risk data" /> : error ? <p role="alert" className="text-xs text-rose-700">{error}</p> : risks.length ? <div className="space-y-3">{risks.map((risk) => <article key={risk.ticketId} className="rounded-xl border border-slate-100 p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><Link href={`/${role}/tickets/${risk.ticketId}`} className="text-xs font-bold text-blue-700 hover:underline">{risk.ticketCode} · {risk.subject ?? "Ticket"}</Link><p className="mt-1 text-[10px] text-slate-500">{risk.priority ?? "Priority unavailable"} · {risk.status ? displayStatus(risk.status) : "Status unavailable"}</p></div><span className="rounded-full bg-rose-50 px-2.5 py-1 text-[9px] font-bold text-rose-700">{risk.level} · score {risk.score}</span></div><p className="mt-3 text-xs text-slate-700">{risk.recommendedAction}</p><p className="mt-2 text-[10px] text-slate-500">Deadline: {new Date(risk.deadline).toLocaleString()} · Remaining: {risk.remainingMs > 0 ? `${Math.floor(risk.remainingMs / 60_000)} minutes` : "breached"}</p><p className="mt-2 text-[9px] text-slate-400">API factors (points): time {risk.factors.timeRemaining}, priority {risk.factors.priority}, age {risk.factors.ticketAge}, workload {risk.factors.agentWorkload}.</p></article>)}</div> : <p className="text-xs text-slate-500">The API returned no active SLA risks.</p>}
+      {loading ? <LoadingState label="Loading SLA risk data" /> : error ? <p role="alert" className="text-xs text-rose-700">{error}</p> : risks.length ? <div className="space-y-3">{risks.map((risk) => <article key={risk.ticketId} className="rounded-xl border border-slate-100 p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><Link href={`/${role}/tickets/${risk.ticketId}`} className="text-xs font-bold text-blue-700 hover:underline">{risk.ticketCode} · {risk.subject ?? "Ticket"}</Link><p className="mt-1 text-[10px] text-slate-500">{risk.priority ?? "Priority unavailable"} · {risk.status ? displayStatus(risk.status) : "Status unavailable"}</p></div><span className="rounded-full bg-rose-50 px-2.5 py-1 text-[9px] font-bold text-rose-700">{risk.level} · score {risk.score}</span></div>      <p className="mt-3 text-xs text-slate-700">{risk.recommendedAction}</p><div className="mt-2"><SlaCountdown compact deadline={risk.deadline} targetMs={risk.targetMs} riskLevel={risk.level} priority={risk.priority} status={risk.status} /></div><p className="mt-2 text-[9px] text-slate-400">API factors (points): time {risk.factors.timeRemaining}, priority {risk.factors.priority}, age {risk.factors.ticketAge}, workload {risk.factors.agentWorkload}.</p></article>)}</div> : <p className="text-xs text-slate-500">The API returned no active SLA risks.</p>}
     </Panel>
   </>;
 }
@@ -1175,7 +1274,7 @@ function LiveAnalytics() {
   return <>
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
       <StatCard label="Total tickets" value={String(analytics.totalTickets)} caption="API total" icon={FileText} tone="blue" />
-      <StatCard label="SLA compliance" value={`${analytics.slaCompliance}%`} caption="API metric" icon={ShieldCheck} tone="teal" />
+      <StatCard label="SLA compliance" value={analytics.slaCompliance === null ? "Insufficient data" : `${analytics.slaCompliance}%`} caption="Completed SLAs" icon={ShieldCheck} tone="teal" />
       <StatCard label="SLA breaches" value={String(analytics.slaBreaches)} caption="API total" icon={ShieldAlert} tone="rose" />
       <StatCard label="Average resolution" value={`${analytics.averageResolutionTimeHours} hours`} caption="API metric" icon={Clock3} tone="violet" />
     </div>
@@ -1183,9 +1282,30 @@ function LiveAnalytics() {
       <Panel title="Ticket volume" subtitle="Time-series data is unavailable from the current analytics API."><VolumeChart type="bar" /></Panel>
       <Panel title="Category distribution" subtitle="Category totals returned by the analytics API"><CategoryChart data={analytics.categories.map((item) => ({ name: item.category, value: item.count }))} /></Panel>
     </div>
+    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <StatCard label="Active SLA timers" value={String(analytics.activeSla.activeTimers)} caption="Active tickets" icon={Clock3} tone="blue" />
+      <StatCard label="Approaching deadlines" value={String(analytics.activeSla.approaching)} caption="Within 15 minutes" icon={BellRing} tone="amber" />
+      <StatCard label="Due within 15 minutes" value={String(analytics.activeSla.dueWithin15Minutes)} caption="Active SLA records" icon={Timer} tone="rose" />
+      <StatCard label="Currently breached" value={String(analytics.activeSla.breached)} caption="Active tickets" icon={ShieldAlert} tone="rose" />
+    </div>
     <div className="grid gap-5 xl:grid-cols-2">
       <Panel title="Priority mix" subtitle="Counts returned by the analytics API"><div className="space-y-4">{analytics.priorities.length ? analytics.priorities.map((item) => <div key={item.priority}><div className="mb-1.5 flex justify-between text-[10px]"><span>{displayPriority(item.priority)}</span><b>{item.count}</b></div><div className="h-1.5 rounded-full bg-slate-100"><div className="h-full rounded-full bg-blue-500" style={{ width: `${item.count / maxPriority * 100}%` }} /></div></div>) : <p className="text-xs text-slate-500">No priority counts are available.</p>}</div></Panel>
-      <Panel title="Customer satisfaction" subtitle="Recorded feedback only"><p className="text-2xl font-bold text-slate-900">{analytics.customerSatisfaction.feedbackCount ? `${analytics.customerSatisfaction.averageRating} / 5` : "No ratings yet"}</p><p className="mt-2 text-xs text-slate-500">{analytics.customerSatisfaction.feedbackCount} submitted responses</p></Panel>
+      <Panel title="Customer satisfaction" subtitle="Positive ratings are 4 or 5; missing feedback is excluded.">
+        <div className="flex flex-wrap items-end justify-between gap-3"><div><p className="text-2xl font-bold text-slate-900">{analytics.customerSatisfaction.csatPercent === null ? "Insufficient data" : `${analytics.customerSatisfaction.csatPercent}%`}</p><p className="mt-1 text-xs text-slate-500">CSAT · {analytics.customerSatisfaction.positiveCount} positive of {analytics.customerSatisfaction.feedbackCount} responses</p></div><p className="text-right text-sm font-semibold text-slate-700">Average overall {analytics.customerSatisfaction.averageRating ? `${analytics.customerSatisfaction.averageRating} / 5` : "—"}<br />Agent service {analytics.customerSatisfaction.averageAgentRating ? `${analytics.customerSatisfaction.averageAgentRating} / 5` : "—"}</p></div>
+        <div className="mt-5 space-y-2">{analytics.customerSatisfaction.ratingDistribution.map((item) => <div key={item.rating} className="flex items-center gap-3 text-[10px]"><span className="w-10 text-slate-500">{item.rating} star</span><div className="h-1.5 flex-1 rounded-full bg-slate-100"><div className="h-full rounded-full bg-amber-400" style={{ width: `${analytics.customerSatisfaction.feedbackCount ? item.count / analytics.customerSatisfaction.feedbackCount * 100 : 0}%` }} /></div><b className="w-7 text-right text-slate-700">{item.count}</b></div>)}</div>
+        <p className="mt-4 text-[10px] text-slate-500">{analytics.customerSatisfaction.trend.length ? `Daily trend (last 30 days): ${analytics.customerSatisfaction.trend.slice(-7).map((item) => `${item.day} ${item.csatPercent ?? "—"}% · n=${item.responses}`).join(" | ")}` : "No daily feedback trend data is available for the selected period."}</p>
+      </Panel>
+    </div>
+    <div className="grid gap-5 xl:grid-cols-2">
+      <Panel title="Agent satisfaction" subtitle="Ratings attached to the agent recorded when feedback was submitted.">
+        {analytics.customerSatisfaction.agentScores.length ? <ul className="space-y-3">{analytics.customerSatisfaction.agentScores.map((item) => <li key={item.agentId ?? item.name} className="flex items-center justify-between gap-3 rounded-lg bg-slate-50 p-3"><span className="text-xs font-semibold text-slate-700">{item.name}</span><span className="text-right text-[10px] text-slate-500">{item.averageAgentRating.toFixed(2)} / 5 agent service · {item.feedbackCount} responses</span></li>)}</ul> : <p className="text-xs text-slate-500">Insufficient agent-attributed feedback data.</p>}
+      </Panel>
+      <Panel title="Agent SLA outcomes" subtitle="Completed tickets with stored SLA response and resolution flags.">
+        {analytics.slaAgentPerformance.length ? <ul className="space-y-3">{analytics.slaAgentPerformance.map((item) => <li key={item.agentId} className="flex items-center justify-between gap-3 rounded-lg bg-slate-50 p-3"><span className="text-xs font-semibold text-slate-700">{item.name}</span><span className="text-right text-[10px] text-slate-500">{item.compliancePercent === null ? "Insufficient data" : `${item.compliancePercent}%`} · {item.completedTickets} tickets · {item.breachedTickets} breached</span></li>)}</ul> : <p className="text-xs text-slate-500">Insufficient completed SLA records for agent-level reporting.</p>}
+      </Panel>
+      <Panel title="Recent customer comments" subtitle="Feedback attached to authorized ticket records.">
+        {analytics.customerSatisfaction.recentFeedback.filter((item) => item.comment || item.suggestions).length ? <ul className="space-y-3">{analytics.customerSatisfaction.recentFeedback.filter((item) => item.comment || item.suggestions).map((item) => <li key={`${item.ticket.id}:${item.createdAt}`} className="rounded-lg border border-slate-100 p-3"><div className="flex justify-between gap-3"><Link href={`/admin/tickets/${item.ticket.id}`} className="text-xs font-semibold text-blue-700 hover:underline">{item.ticket.ticketCode}</Link><span className="text-[10px] text-slate-500">{item.rating}/5 · {new Date(item.createdAt).toLocaleDateString()}</span></div>{item.comment && <p className="mt-2 whitespace-pre-wrap text-xs text-slate-600">{item.comment}</p>}{item.suggestions && <p className="mt-1 whitespace-pre-wrap text-xs text-slate-500">Suggestion: {item.suggestions}</p>}</li>)}</ul> : <p className="text-xs text-slate-500">No written feedback has been submitted.</p>}
+      </Panel>
     </div>
     <FairnessPanel workload={analytics.agentWorkload} />
   </>;
@@ -1249,6 +1369,10 @@ function LiveSlaConfig() {
 }
 
 function LiveSettings() {
-  return <Panel title="Workspace settings" subtitle="No workspace-settings endpoint is available in the existing API."><p className="text-xs leading-relaxed text-slate-600">Organization identity and platform preference controls have no backend persistence endpoint. They are intentionally unavailable here rather than appearing to save values that would be lost.</p></Panel>;
+  return <Panel title="SLA audio and notification settings" subtitle="Audio controls are available in the signed-in workspace header.">
+    <p className="text-xs leading-relaxed text-slate-600">Enable sound after login, test it, and mute or unmute alerts from the header. The mute preference and alert deduplication markers are stored in this browser only. Alerts require the workspace page to remain open; they cannot sound while the browser or device is closed.</p>
+    <a href="#sla-audio-controls" className="mt-4 inline-flex rounded-lg border border-slate-200 px-3 py-2 text-[10px] font-semibold text-blue-700 hover:bg-slate-50">Open audio controls</a>
+    <p className="mt-4 text-xs leading-relaxed text-slate-500">SLA notification stages follow the fixed 15-minute, 5-minute, 1-minute, and breach thresholds. Feedback notifications use the existing authenticated notification system. Per-user notification preference controls are unavailable because the API has no persistence endpoint for them.</p>
+  </Panel>;
 }
 

@@ -130,13 +130,26 @@ export type ApiTicket = {
     resolvedAt: string | null;
     firstResponseBreached?: boolean;
     resolutionBreached?: boolean;
-    policy?: { updateIntervalHours: number } | null;
+    policy?: {
+      updateIntervalHours?: number;
+      firstResponseMinutes?: number;
+      resolutionMinutes?: number;
+    } | null;
   } | null;
   messages?: ApiTicketMessage[];
   internalNotes?: ApiTicketMessage[];
   history?: ApiTicketHistory[];
   attachments?: ApiAttachment[];
-  feedback?: { rating: number; comment: string | null } | null;
+  feedback?: {
+    rating: number;
+    agentRating: number | null;
+    communicationRating: number | null;
+    resolutionRating: number | null;
+    comment: string | null;
+    suggestions: string | null;
+    createdAt: string;
+    agent: { id: string; fullName: string } | null;
+  } | null;
   _count?: { messages: number; attachments: number };
 };
 
@@ -168,7 +181,7 @@ export type ApiAnalytics = {
   openTickets: number;
   inProgressTickets: number;
   resolvedTickets: number;
-  slaCompliance: number;
+  slaCompliance: number | null;
   slaBreaches: number;
   averageResolutionTimeHours: number;
   categories: Array<{ category: string; count: number }>;
@@ -180,7 +193,31 @@ export type ApiAnalytics = {
     urgentTickets: number;
     skills: Array<{ domain: ApiTicket["domain"]; category: string; skillLevel: number }>;
   }>;
-  customerSatisfaction: { averageRating: number; feedbackCount: number };
+  customerSatisfaction: {
+    averageRating: number;
+    averageAgentRating: number;
+    averageCommunicationRating: number;
+    averageResolutionRating: number;
+    feedbackCount: number;
+    positiveCount: number;
+    csatPercent: number | null;
+    ratingDistribution: Array<{ rating: number; count: number }>;
+    agentScores: Array<{ agentId: string | null; name: string; averageRating: number; averageAgentRating: number; feedbackCount: number }>;
+    recentFeedback: Array<{
+      rating: number;
+      agentRating: number | null;
+      communicationRating: number | null;
+      resolutionRating: number | null;
+      comment: string | null;
+      suggestions: string | null;
+      createdAt: string;
+      ticket: { id: string; ticketCode: string };
+      agent: { id: string; fullName: string } | null;
+    }>;
+    trend: Array<{ day: string; responses: number; positive: number; csatPercent: number | null }>;
+  };
+  activeSla: { activeTimers: number; approaching: number; dueWithin15Minutes: number; breached: number };
+  slaAgentPerformance: Array<{ agentId: string; name: string; completedTickets: number; breachedTickets: number; compliancePercent: number | null }>;
 };
 
 export type ApiSlaRisk = {
@@ -192,6 +229,8 @@ export type ApiSlaRisk = {
   level: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
   score: number;
   remainingMs: number;
+  targetMs: number;
+  remainingRatio: number;
   deadline: string;
   recommendedAction: string;
   factors: {

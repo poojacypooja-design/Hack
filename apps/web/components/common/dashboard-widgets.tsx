@@ -24,6 +24,7 @@ import {
   YAxis,
 } from "recharts";
 import { useSlaRisks } from "@/lib/use-sla-risks";
+import { SlaCountdown } from "@/components/common/sla-countdown";
 
 export function StatCard({
   label,
@@ -164,10 +165,6 @@ export function CategoryChart({ data }: { data?: Array<{ name: string; value: nu
 export function RiskCard({ compact = false }: { compact?: boolean }) {
   const { risks, loading, error } = useSlaRisks();
   const topRisk = risks[0];
-  const countdown = topRisk && topRisk.remainingMs > 0
-    ? [Math.floor(topRisk.remainingMs / 3_600_000), Math.floor((topRisk.remainingMs % 3_600_000) / 60_000), Math.floor((topRisk.remainingMs % 60_000) / 1000)]
-      .map((part) => String(part).padStart(2, "0")).join(":")
-    : "Breached";
   return (
     <div className={`overflow-hidden rounded-2xl border border-rose-100 bg-white ${compact ? "" : "shadow-sm"}`}>
       <div className="flex items-center justify-between bg-gradient-to-r from-[#fff5f4] to-[#fffaf5] px-4 py-3">
@@ -180,7 +177,7 @@ export function RiskCard({ compact = false }: { compact?: boolean }) {
       {error ? <p role="alert" className="p-4 text-xs text-rose-700">{error}</p> : !topRisk ? <p className="p-4 text-xs text-slate-500">{loading ? "Loading API risk data…" : "No active SLA risks were returned."}</p> : <div className="space-y-3 p-4">
         <div className="flex items-center justify-between gap-2">
           <div><p className="text-xs font-semibold text-slate-800">{topRisk.ticketCode} <span className="font-normal text-slate-500">· {topRisk.subject ?? "Ticket"}</span></p><p className="mt-1 text-[10px] text-slate-500">Deadline {new Date(topRisk.deadline).toLocaleString()}</p></div>
-          <div className="text-right"><p className="font-mono text-sm font-bold text-rose-600">{countdown}</p><p className="text-[9px] font-bold text-rose-500">{topRisk.level}</p></div>
+          <SlaCountdown compact deadline={topRisk.deadline} targetMs={topRisk.targetMs} riskLevel={topRisk.level} priority={topRisk.priority} status={topRisk.status} />
         </div>
         <div className="h-1.5 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-gradient-to-r from-amber-400 to-rose-500" style={{ width: `${topRisk.score}%` }} /></div>
         <p className="rounded-lg bg-amber-50 px-3 py-2 text-[10px] leading-relaxed text-amber-800">{topRisk.recommendedAction}</p>

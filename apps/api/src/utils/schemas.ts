@@ -97,7 +97,11 @@ export const escalationSchema = z.object({
 
 export const feedbackSchema = z.object({
   rating: z.number().int().min(1).max(5),
+  agentRating: z.number().int().min(1).max(5),
+  communicationRating: z.number().int().min(1).max(5),
+  resolutionRating: z.number().int().min(1).max(5),
   comment: z.string().trim().max(2000).optional(),
+  suggestions: z.string().trim().max(2000).optional(),
 }).strict();
 
 export const resolutionSchema = z.object({

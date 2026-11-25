@@ -64,6 +64,8 @@ export function calculateSlaRisk(
     level,
     score,
     remainingMs,
+    targetMs,
+    remainingRatio: Math.max(0, Math.min(1, remainingRatio)),
     deadline,
     recommendedAction,
     factors: {

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { ArrowDownUp, ChevronDown } from "lucide-react";
 import type { Ticket } from "@/lib/mock-data";
 import { FilterPanel, SearchBar } from "@/components/ui/primitives";
+import { SlaCountdown } from "@/components/common/sla-countdown";
 
 export function TicketTable({
   mode = "default",
@@ -53,7 +54,7 @@ export function TicketTable({
               <td className="px-3 py-3.5"><PriorityBadge priority={ticket.priority} /></td>
               <td className="px-3 py-3.5"><StatusBadge status={ticket.status} /></td>
               <td className="px-3 py-3.5"><span className="text-xs text-slate-600">{ticket.agent}</span></td>
-              <td className="px-3 py-3.5"><span className={`font-mono text-[11px] font-semibold ${ticket.priority === "Critical" ? "text-rose-600" : "text-slate-600"}`}>{ticket.sla}</span></td>
+              <td className="px-3 py-3.5">{ticket.slaDeadline ? <SlaCountdown compact deadline={ticket.slaDeadline} targetMs={ticket.slaTargetMs} resolvedAt={ticket.slaResolvedAt} status={ticket.slaStatus} priority={ticket.priority} /> : <span className={`font-mono text-[11px] font-semibold ${ticket.priority === "Critical" ? "text-rose-600" : "text-slate-600"}`}>{ticket.sla}</span>}</td>
               <td className="px-3 py-3.5"><Link href={`${hrefPrefix}/${ticket.id}`} aria-label={`View ${ticket.id}`} className="rounded-lg px-2 py-1 text-[10px] font-semibold text-blue-600 hover:bg-blue-50">View</Link></td>
             </tr>
           ))}</tbody>

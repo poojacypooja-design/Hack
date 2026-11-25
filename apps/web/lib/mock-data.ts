@@ -9,6 +9,10 @@ export type Ticket = {
   updated: string;
   sla: string;
   ticketCode?: string;
+  slaDeadline?: string | null;
+  slaTargetMs?: number | null;
+  slaResolvedAt?: string | null;
+  slaStatus?: "OPEN" | "IN_PROGRESS" | "WAITING_FOR_CUSTOMER" | "RESOLVED" | "CLOSED";
 };
 
 export const demoTickets: Ticket[] = [

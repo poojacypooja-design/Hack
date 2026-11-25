@@ -54,6 +54,9 @@ export function toTicketView(ticket: ApiTicket): Ticket {
   const deadline = deadlineValue ? new Date(deadlineValue) : null;
   const isComplete = ticket.status === "RESOLVED" || ticket.status === "CLOSED";
   const resolvedAt = ticket.slaRecord?.resolvedAt ? new Date(ticket.slaRecord.resolvedAt) : null;
+  const targetMinutes = ticket.slaRecord?.firstResponseAt
+    ? ticket.slaRecord.policy?.resolutionMinutes
+    : ticket.slaRecord?.policy?.firstResponseMinutes;
   const sla = !deadline
     ? "Unavailable"
     : isComplete
@@ -76,6 +79,10 @@ export function toTicketView(ticket: ApiTicket): Ticket {
     agent: ticket.assignedAgent?.fullName ?? "Unassigned",
     updated,
     sla,
+    slaDeadline: deadline?.toISOString() ?? null,
+    slaTargetMs: targetMinutes ? targetMinutes * 60_000 : null,
+    slaResolvedAt: ticket.slaRecord?.resolvedAt ?? null,
+    slaStatus: ticket.status,
   };
 }
 

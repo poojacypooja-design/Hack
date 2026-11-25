@@ -44,6 +44,7 @@ enum NotificationType {
   ESCALATION
   RESOLUTION
   NO_SILENCE
+  CUSTOMER_FEEDBACK
 }
 
 enum TicketHistoryAction {
@@ -89,6 +90,7 @@ model User {
   historyEntries        TicketHistory[]      @relation("HistoryActor")
   notifications         Notification[]
   feedback              TicketFeedback[]
+  receivedFeedback      TicketFeedback[]      @relation("FeedbackAgent")
   skills                AgentSkill[]
   incidentsCreated      TicketIncidentGroup[] @relation("IncidentCreator")
   knowledgeAuthored     ResolutionKnowledge[] @relation("KnowledgeAuthor")
@@ -258,14 +260,21 @@ model TicketFeedback {
   id          String   @id @default(uuid()) @db.Uuid
   ticketId    String   @unique @db.Uuid
   customerId  String   @db.Uuid
+  agentId     String?  @db.Uuid
   rating      Int
+  agentRating Int?
+  communicationRating Int?
+  resolutionRating Int?
   comment     String?  @db.VarChar(2000)
+  suggestions String?  @db.VarChar(2000)
   createdAt   DateTime @default(now())
   ticket      Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
   customer    User     @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  agent       User?    @relation("FeedbackAgent", fields: [agentId], references: [id], onDelete: SetNull)
 
   @@index([customerId, createdAt])
   @@index([rating, createdAt])
+  @@index([agentId, createdAt])
 }
 
 model TicketHistory {

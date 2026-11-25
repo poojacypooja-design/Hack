@@ -10,7 +10,8 @@ if (!process.env.DATABASE_URL) {
 
 const { ticketTextSimilarity, normalizeTicketText } = await import("../src/services/issue-dna.service.js");
 const { calculateSlaRisk } = await import("../src/services/sla.service.js");
-const { loginSchema, registerSchema } = await import("../src/utils/schemas.js");
+const { calculateCsatSummary } = await import("../src/services/analytics.service.js");
+const { feedbackSchema, loginSchema, registerSchema } = await import("../src/utils/schemas.js");
 const { parseEnvironmentSettings, parseSeedAdminSettings } = await import("../src/config/env.js");
 
 test("Issue DNA normalizes punctuation and diacritics before comparing tokens", () => {
@@ -35,7 +36,50 @@ test("SLA risk marks expired urgent deadlines critical and explains the factors"
   assert.equal(result.level, "CRITICAL");
   assert.equal(result.remainingMs, -3_600_000);
   assert.equal(result.factors.priority, 25);
+  assert.equal(result.targetMs, 5 * 60 * 60_000);
+  assert.equal(result.remainingRatio, 0);
   assert.match(result.recommendedAction, /Escalate immediately/);
+});
+
+test("SLA remaining ratio uses the actual active deadline duration", () => {
+  const createdAt = new Date("2026-01-01T12:00:00.000Z");
+  const result = calculateSlaRisk({
+    createdAt,
+    priority: TicketPriority.MEDIUM,
+    assignedAgentId: null,
+    slaRecord: {
+      firstResponseAt: null,
+      firstResponseDueAt: new Date("2026-01-01T13:00:00.000Z"),
+      resolutionDueAt: new Date("2026-01-01T15:00:00.000Z"),
+    },
+  }, 0, new Date("2026-01-01T12:30:00.000Z"));
+  assert.equal(result.remainingMs, 30 * 60_000);
+  assert.equal(result.targetMs, 60 * 60_000);
+  assert.equal(result.remainingRatio, 0.5);
+});
+
+test("CSAT counts only 4- and 5-star responses as positive", () => {
+  assert.deepEqual(calculateCsatSummary([
+    { rating: 1, count: 2 },
+    { rating: 3, count: 1 },
+    { rating: 4, count: 3 },
+    { rating: 5, count: 4 },
+  ]), { feedbackCount: 10, positiveCount: 7, csatPercent: 70 });
+  assert.deepEqual(calculateCsatSummary([]), { feedbackCount: 0, positiveCount: 0, csatPercent: null });
+});
+
+test("feedback requires every rating to be between one and five", () => {
+  const submission = {
+    rating: 5,
+    agentRating: 4,
+    communicationRating: 5,
+    resolutionRating: 4,
+    comment: "Helpful response",
+    suggestions: "Keep it up",
+  };
+  assert.equal(feedbackSchema.safeParse(submission).success, true);
+  assert.equal(feedbackSchema.safeParse({ ...submission, resolutionRating: 0 }).success, false);
+  assert.equal(feedbackSchema.safeParse({ ...submission, agentRating: 6 }).success, false);
 });
 
 test("password schemas enforce bcrypt's UTF-8 byte limit", () => {
