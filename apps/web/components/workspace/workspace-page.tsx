@@ -28,7 +28,7 @@ import { CategoryChart, Panel, RiskCard, StatCard, VolumeChart } from "@/compone
 import { DashboardHeader } from "@/components/common/dashboard-header";
 import { PriorityBadge, StatusBadge, TicketTable } from "@/components/common/ticket-table";
 import { Modal, NotificationPanel, TicketTimeline } from "@/components/ui/primitives";
-import { apiJson, apiRequest, displayDomain, displayPriority, displayStatus, errorMessage, getApiBaseUrl, type ApiAnalytics, type ApiSlaRisk, type ApiTicket, type ApiTicketHistory, type ApiTicketMessage } from "@/lib/api";
+import { apiJson, apiRequest, displayDomain, displayPriority, displayStatus, errorMessage, getApiBaseUrl, type ApiAnalytics, type ApiSlaRisk, type ApiTicket, type ApiTicketHistory, type ApiUser } from "@/lib/api";
 import { toTicketView, useTicketList } from "@/lib/tickets";
 import { LoadingState } from "@/components/ui/primitives";
 import { useAnalytics } from "@/lib/use-analytics";
@@ -38,6 +38,7 @@ import { getRealtimeSocket, REALTIME_UPDATE_EVENT } from "@/lib/realtime";
 import { SlaCountdown } from "@/components/common/sla-countdown";
 
 type Role = "customer" | "agent" | "admin";
+type AssignmentStats = { analysedTickets: number; automaticallyAssigned: number; automaticAssignmentRatePercent: number | null; waiting: number; failed: number; disabled: number };
 
 const roleTitles: Record<Role, string> = {
   customer: "Your support, in focus.",
@@ -87,7 +88,7 @@ export function WorkspacePage({
       {section === "issue-dna" && <LiveIssueDna role={role} />}
       {section === "resolution-memory" && <LiveResolutionMemory />}
       {section === "notifications" && <LiveNotifications role={role} />}
-      {section === "profile" && <LiveProfile role={role} />}
+      {section === "profile" && <><LiveProfile role={role} />{role === "agent" && <AgentAvailabilityPanel />}</>}
       {section === "customers" && <LivePeopleTable kind="customer" />}
       {section === "agents" && <LivePeopleTable kind="agent" />}
       {section === "assignments" && <LiveAssignments />}
@@ -407,11 +408,11 @@ function CreateTicket({ onCreated }: { onCreated: () => void }) {
         <Panel title="Attachments" subtitle="Screenshots and files help us investigate.">
           <label className="flex min-h-32 cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50 p-5 text-center transition hover:border-blue-400 hover:bg-blue-50/50"><span className="mb-2 grid h-9 w-9 place-items-center rounded-full bg-white text-slate-500 shadow-sm"><Plus size={18} /></span><span className="text-xs font-semibold text-slate-700">{fileName || "Add an attachment"}</span><span className="mt-1 text-[10px] text-slate-400">PNG, JPG, PDF up to 10 MB</span><input type="file" accept=".png,.jpg,.jpeg,.pdf" className="sr-only" onChange={(event) => { const selected = event.target.files?.[0] ?? null; setFile(selected); setFileName(selected?.name ?? ""); }} /></label>
         </Panel>
-        <div className="rounded-2xl border border-blue-100 bg-blue-50/70 p-5"><div className="flex items-center gap-2 text-blue-700"><Sparkles size={16} /><p className="text-xs font-bold">Problem reproduction details</p></div><p className="mt-2 text-[11px] leading-relaxed text-slate-600">Your expected result, observed behavior, reference, and attempted steps are included in the ticket description. No automated diagnosis is available.</p></div>
+        <div className="rounded-2xl border border-blue-100 bg-blue-50/70 p-5"><div className="flex items-center gap-2 text-blue-700"><Sparkles size={16} /><p className="text-xs font-bold">Problem reproduction details</p></div><p className="mt-2 text-[11px] leading-relaxed text-slate-600">Your expected result, observed behavior, reference, and attempted steps are included in the ticket description. A transparent rules-based classifier identifies the support category and routes requests when a matching agent is available.</p></div>
       </aside>
     </form>
     <Modal open={confirmationOpen} title="Support request created" onClose={() => setConfirmationOpen(false)}>
-      <div className="text-center"><span className="mx-auto grid h-12 w-12 place-items-center rounded-full bg-emerald-50 text-emerald-600"><CheckCircle2 size={24} /></span><p className="mt-4 text-sm font-bold text-slate-800">Your support request was created.</p><p className="mt-2 text-xs leading-relaxed text-slate-500">Ticket ID <b className="text-blue-700">{createdTicket?.ticketCode}</b></p><div className="mt-5 flex justify-center gap-2"><button type="button" onClick={() => { formRef.current?.reset(); setDomain("Logistics"); setFileName(""); setFile(null); setSubmitted(false); setCreatedTicket(null); setConfirmationOpen(false); }} className="rounded-lg border border-slate-200 px-4 py-2.5 text-[10px] font-semibold text-slate-600">Create another</button>{createdTicket && <button type="button" onClick={() => router.push(`/customer/tickets/${createdTicket.id}`)} className="rounded-lg bg-blue-600 px-4 py-2.5 text-[10px] font-semibold text-white">View ticket</button>}</div></div>
+      <div className="text-center"><span className="mx-auto grid h-12 w-12 place-items-center rounded-full bg-emerald-50 text-emerald-600"><CheckCircle2 size={24} /></span><p className="mt-4 text-sm font-bold text-slate-800">Your support request was created.</p><p className="mt-2 text-xs leading-relaxed text-slate-500">Ticket ID <b className="text-blue-700">{createdTicket?.ticketCode}</b></p>{createdTicket?.analysis && <div className="mt-4 rounded-lg bg-slate-50 p-3 text-left text-[11px] text-slate-600"><p><b>Rules-based category:</b> {createdTicket.analysis.problemCategory}</p><p className="mt-1"><b>Priority:</b> {displayPriority(createdTicket.priority)}</p><p className="mt-1"><b>Assignment:</b> {createdTicket.assignedAgent ? `Assigned to ${createdTicket.assignedAgent.fullName}` : createdTicket.analysis.assignmentStatus === "DISABLED" ? "Waiting for support team review" : "Finding an available specialist"}</p></div>}<div className="mt-5 flex justify-center gap-2"><button type="button" onClick={() => { formRef.current?.reset(); setDomain("Logistics"); setFileName(""); setFile(null); setSubmitted(false); setCreatedTicket(null); setConfirmationOpen(false); }} className="rounded-lg border border-slate-200 px-4 py-2.5 text-[10px] font-semibold text-slate-600">Create another</button>{createdTicket && <button type="button" onClick={() => router.push(`/customer/tickets/${createdTicket.id}`)} className="rounded-lg bg-blue-600 px-4 py-2.5 text-[10px] font-semibold text-white">View ticket</button>}</div></div>
     </Modal>
     </>
   );
@@ -719,6 +720,21 @@ function TicketDetail({ role, ticketId, onAction }: { role: Role; ticketId: stri
           <Panel title="Ticket activity" subtitle="History returned by the API; customer access is filtered by the server."><HistoryList items={ticket.history ?? []} /></Panel>
         </div>
         <div className="space-y-4">
+          {ticket.analysis && <Panel title={role === "customer" ? "Ticket triage" : "Rule-based ticket analysis"} subtitle={role === "customer" ? "Category and assignment status from the support system." : "Transparent rules fallback; no external AI provider is configured."}>
+            <DetailLine label="Problem category" value={ticket.analysis.problemCategory} />
+            {ticket.analysis.subcategory && <DetailLine label="Subcategory" value={ticket.analysis.subcategory} />}
+            {role === "customer"
+              ? <DetailLine label="Assignment" value={ticket.assignedAgent ? `Assigned to ${ticket.assignedAgent.fullName}` : ticket.analysis.assignmentStatus === "ASSIGNED" ? "Assigned" : "Finding an available specialist"} />
+              : <>
+                <DetailLine label="Complexity" value={ticket.analysis.complexity ?? "Unavailable"} />
+                <DetailLine label="Priority recommendation" value={ticket.analysis.recommendedPriority} />
+                <DetailLine label="Initial SLA risk (priority-based)" value={ticket.analysis.potentialSlaRisk ?? "Unavailable"} />
+                <DetailLine label="Required skills" value={ticket.analysis.requiredSkills?.join(", ") || "No specific skill signals"} />
+                {ticket.analysis.suggestedTeam && <DetailLine label="Suggested team" value={ticket.analysis.suggestedTeam} />}
+                {ticket.analysis.assignmentReason && <p className="mt-3 rounded-lg bg-blue-50 p-3 text-[10px] leading-relaxed text-blue-900">{ticket.analysis.assignmentReason}</p>}
+                {ticket.analysis.resolutionApproach && <p className="mt-3 text-[11px] leading-relaxed text-slate-600"><b>Suggested approach:</b> {ticket.analysis.resolutionApproach}</p>}
+              </>}
+          </Panel>}
           {role !== "customer" && <Panel title="Ticket status" subtitle="The API validates allowed status transitions."><select aria-label="Update ticket status" disabled={actionSaving} value={ticket.status} onChange={(event) => void changeStatus(event.target.value as ApiTicket["status"])} className={inputClass}><option value="OPEN">Open</option><option value="IN_PROGRESS">In progress</option><option value="WAITING_FOR_CUSTOMER">Waiting for customer</option><option value="RESOLVED">Resolved</option><option value="CLOSED">Closed</option></select></Panel>}
           <Panel title="Ticket details"><DetailLine label="Assigned agent" value={ticket.assignedAgent?.fullName ?? "Unassigned"} /><DetailLine label="Updated" value={new Date(ticket.updatedAt).toLocaleString()} /><DetailLine label="Ticket owner" value={ticket.customer.fullName} />
             <div className="mt-3">
@@ -1061,6 +1077,31 @@ function LiveProfile({ role }: { role: Role }) {
   return <div className="grid gap-5 xl:grid-cols-[1fr_0.8fr]"><Panel title={`${role[0]?.toUpperCase()}${role.slice(1)} profile`} subtitle="Account fields are saved by the authenticated API.">{sessionError && <p role="alert" className="mb-3 text-xs text-rose-700">{sessionError}</p>}{loading ? <LoadingState label="Loading your profile" /> : user && profile ? <form onSubmit={submit} className="grid gap-4 sm:grid-cols-2"><Field label="Full name"><input required minLength={2} maxLength={120} value={profile.fullName} onChange={(event) => updateProfile("fullName", event.target.value)} className={inputClass} /></Field><Field label="Email address"><input type="email" value={user.email} readOnly className={`${inputClass} bg-slate-50`} /></Field><Field label="Phone"><input maxLength={32} value={profile.phone} onChange={(event) => updateProfile("phone", event.target.value)} className={inputClass} /></Field><Field label="Company"><input maxLength={160} value={profile.company} onChange={(event) => updateProfile("company", event.target.value)} className={inputClass} /></Field><Field label="Preferred domain"><select value={profile.preferredDomain} onChange={(event) => updateProfile("preferredDomain", event.target.value)} className={inputClass}><option value="">No preference</option><option value="HEALTH">Health</option><option value="LOGISTICS">Logistics</option><option value="SMART_OPERATIONS">Smart operations</option></select></Field><div className="flex items-end"><button disabled={saving} className="rounded-lg bg-blue-600 px-4 py-2.5 text-[11px] font-semibold text-white disabled:opacity-60">{saving ? "Saving…" : "Save profile"}</button></div>{error && <p role="alert" className="sm:col-span-2 text-xs text-rose-700">{error}</p>}{saved && <p role="status" className="sm:col-span-2 text-xs text-emerald-700">Profile updated.</p>}</form> : <p className="text-xs text-slate-500">Profile is unavailable for this session.</p>}</Panel><Panel title="Account options" subtitle="Preferences without backend support are not shown as saved."><p className="text-xs leading-relaxed text-slate-600">Email, notification preferences, time zone, and language settings do not have corresponding API endpoints yet. No local-only save action is presented.</p></Panel></div>;
 }
 
+function AgentAvailabilityPanel() {
+  const { user, loading, refresh } = useSession();
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function toggleAvailability() {
+    if (!user || saving) return;
+    setSaving(true);
+    setError("");
+    try {
+      await apiJson("/users/availability", "PATCH", { isAvailable: !user.isAvailable });
+      await refresh();
+    } catch (requestError) {
+      setError(errorMessage(requestError));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return <Panel title="Automatic assignment availability" subtitle="Only agents marked available can receive automatic assignments.">
+    {loading ? <LoadingState label="Loading availability" /> : user ? <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-slate-700">You are currently <b>{user.isAvailable ? "available" : "unavailable"}</b> for new tickets.</p><button type="button" disabled={saving} onClick={() => void toggleAvailability()} className="rounded-lg border border-slate-200 px-3 py-2 text-[10px] font-semibold text-slate-700 disabled:opacity-50">{saving ? "Saving…" : user.isAvailable ? "Mark unavailable" : "Mark available"}</button></div> : <p className="text-xs text-slate-500">Agent availability could not be loaded.</p>}
+    {error && <p role="alert" className="mt-3 text-xs text-rose-700">{error}</p>}
+  </Panel>;
+}
+
 function PeopleTable({ kind }: { kind: "customer" | "agent" }) {
   const isAgent = kind === "agent";
   const rows = isAgent ? agents.map((agent) => [agent.name, `${agent.active} active tickets`, `${agent.urgent} urgent`, `${agent.capacity}% capacity`, agent.capacity > 85 ? "At capacity" : "Available"]) : [["Aarav Mehta", "12 tickets", "Logistics", "Today, 9:18 AM", "Active"], ["Riya Kapoor", "8 tickets", "Health", "Today, 8:42 AM", "Active"], ["Northstar Logistics", "26 tickets", "Fleet tracking", "Yesterday", "Active"], ["Sofia Alvarez", "5 tickets", "Smart operations", "Yesterday", "Active"]];
@@ -1077,6 +1118,10 @@ function LivePeopleTable({ kind }: { kind: "customer" | "agent" }) {
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState("");
+  const [agentDomain, setAgentDomain] = useState<"HEALTH" | "LOGISTICS" | "SMART_OPERATIONS">("LOGISTICS");
+  const agentCategories = agentDomain === "HEALTH" ? categoriesByDomain.Health
+    : agentDomain === "SMART_OPERATIONS" ? categoriesByDomain["Smart Operations"]
+      : categoriesByDomain.Logistics;
 
   const loadUsers = useCallback(async () => {
     try {
@@ -1127,7 +1172,12 @@ function LivePeopleTable({ kind }: { kind: "customer" | "agent" }) {
         fullName: String(data.get("fullName") ?? ""),
         email: String(data.get("email") ?? ""),
         password: String(data.get("password") ?? ""),
-        skills: [],
+        skills: [{
+          domain: String(data.get("domain") ?? "LOGISTICS"),
+          category: String(data.get("category") ?? ""),
+          skillLevel: Number(data.get("skillLevel") ?? 1),
+          skillTags: String(data.get("skillTags") ?? "").split(",").map((tag) => tag.trim()).filter(Boolean),
+        }],
       });
       form.reset();
       setSuccess("Agent account created.");
@@ -1139,14 +1189,82 @@ function LivePeopleTable({ kind }: { kind: "customer" | "agent" }) {
     }
   }
 
+  async function changeAvailability(user: ManagedUser) {
+    setSaving(true);
+    setError("");
+    setSuccess("");
+    try {
+      await apiJson(`/users/${encodeURIComponent(user.id)}/assignment-profile`, "PATCH", { isAvailable: !user.isAvailable });
+      setSuccess(`${user.fullName} is now ${user.isAvailable ? "unavailable" : "available"} for automatic assignment.`);
+      await loadUsers();
+    } catch (requestError) {
+      setError(errorMessage(requestError));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveSkill(user: ManagedUser, skill: NonNullable<ApiUser["skills"]>[number]) {
+    const skills = [
+      ...(user.skills ?? []).filter((item) => item.domain !== skill.domain || item.category !== skill.category),
+      skill,
+    ];
+    setSaving(true);
+    setError("");
+    setSuccess("");
+    try {
+      await apiJson(`/users/${encodeURIComponent(user.id)}/assignment-profile`, "PATCH", { skills });
+      setSuccess(`${skill.category} skill saved for ${user.fullName}.`);
+      await loadUsers();
+    } catch (requestError) {
+      setError(errorMessage(requestError));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return <div className="space-y-5">
-    {isAgent && <Panel title="Provision an agent" subtitle="Agents are created by administrators only; no public agent registration is available."><form onSubmit={createAgent} className="grid gap-3 sm:grid-cols-2"><Field label="Full name"><input name="fullName" required minLength={2} maxLength={120} className={inputClass} /></Field><Field label="Email"><input name="email" type="email" required className={inputClass} /></Field><Field label="Temporary password"><input name="password" type="password" minLength={12} maxLength={128} required autoComplete="new-password" className={inputClass} /></Field><div className="flex items-end"><button disabled={saving} className="rounded-lg bg-blue-600 px-4 py-2.5 text-[11px] font-semibold text-white disabled:opacity-60">{saving ? "Creating…" : "Create agent"}</button></div></form></Panel>}
+    {isAgent && <Panel title="Provision an agent" subtitle="Agents are created by administrators only; configure at least one real domain/category skill for assignment eligibility."><form onSubmit={createAgent} className="grid gap-3 sm:grid-cols-2"><Field label="Full name"><input name="fullName" required minLength={2} maxLength={120} className={inputClass} /></Field><Field label="Email"><input name="email" type="email" required className={inputClass} /></Field><Field label="Temporary password"><input name="password" type="password" minLength={12} maxLength={128} required autoComplete="new-password" className={inputClass} /></Field><Field label="Domain"><select name="domain" value={agentDomain} onChange={(event) => setAgentDomain(event.target.value as typeof agentDomain)} className={inputClass}><option value="LOGISTICS">Logistics</option><option value="HEALTH">Health</option><option value="SMART_OPERATIONS">Smart operations</option></select></Field><Field label="Category"><select required name="category" className={inputClass}>{agentCategories.map((category) => <option key={category}>{category}</option>)}</select></Field><Field label="Skill level (1–5)"><select name="skillLevel" className={inputClass}><option value="1">1 · Beginner</option><option value="2">2 · Intermediate</option><option value="3">3 · Proficient</option><option value="4">4 · Advanced</option><option value="5">5 · Expert</option></select></Field><Field label="Skill tags (comma-separated)" wide><input name="skillTags" placeholder="Payment troubleshooting, billing reconciliation" className={inputClass} /></Field><div className="flex items-end"><button disabled={saving} className="rounded-lg bg-blue-600 px-4 py-2.5 text-[11px] font-semibold text-white disabled:opacity-60">{saving ? "Creating…" : "Create agent"}</button></div></form></Panel>}
     <Panel title={isAgent ? "Support team" : "Customer accounts"} subtitle="Accounts and ticket counts returned by the users API.">
       {error && <p role="alert" className="mb-3 rounded-lg bg-rose-50 p-3 text-xs text-rose-700">{error}</p>}
       {success && <p role="status" className="mb-3 rounded-lg bg-emerald-50 p-3 text-xs text-emerald-700">{success}</p>}
       {loading ? <LoadingState label="Loading accounts" /> : <div className="overflow-x-auto"><table className="w-full min-w-[700px] text-left"><thead><tr className="border-y border-slate-100 text-[10px] uppercase tracking-wide text-slate-400">{["Name", "Email", "Tickets", "Created", "Status", "Action"].map((label) => <th className="px-3 py-3 font-bold" key={label}>{label}</th>)}</tr></thead><tbody>{users.map((user) => <tr key={user.id} className="border-b border-slate-50 text-[11px]"><td className="px-3 py-4 font-semibold text-slate-800">{user.fullName}</td><td className="px-3 py-4 text-slate-600">{user.email}</td><td className="px-3 py-4 text-slate-600">{isAgent ? user._count.assignedTickets : user._count.customerTickets}</td><td className="px-3 py-4 text-slate-600">{new Date(user.createdAt).toLocaleDateString()}</td><td className="px-3 py-4"><span className={`rounded-full px-2 py-1 text-[9px] font-semibold ${user.isActive ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>{user.isActive ? "Active" : "Inactive"}</span></td><td className="px-3 py-4"><button type="button" onClick={() => void changeStatus(user)} className="text-[10px] font-semibold text-blue-600">{user.isActive ? "Deactivate" : "Activate"}</button></td></tr>)}</tbody></table>{users.length === 0 && <p className="py-8 text-center text-xs text-slate-500">No accounts were returned.</p>}</div>}
     </Panel>
+    {isAgent && <Panel title="Agent availability and skills" subtitle="Automatic matching only considers active, available agents with the ticket's exact domain and category.">
+      {users.map((user) => <article key={user.id} className="mb-3 rounded-xl border border-slate-100 p-4 last:mb-0"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-xs font-bold text-slate-800">{user.fullName}</p><p className="mt-1 text-[10px] text-slate-500">{user.skills?.length ? user.skills.map((skill) => `${skill.domain} · ${skill.category} (level ${skill.skillLevel})`).join(" · ") : "No assignment skills configured"}</p></div><button type="button" disabled={saving || !user.isActive} onClick={() => void changeAvailability(user)} className="rounded-lg border border-slate-200 px-3 py-2 text-[10px] font-semibold text-slate-700 disabled:opacity-50">{user.isAvailable ? "Mark unavailable" : "Mark available"}</button></div><AgentSkillEditor skills={user.skills ?? []} disabled={saving} onSave={(skill) => void saveSkill(user, skill)} /></article>)}
+      {!loading && users.length === 0 && <p className="text-xs text-slate-500">No agent accounts are available.</p>}
+    </Panel>}
   </div>;
+}
+
+function AgentSkillEditor({
+  skills,
+  disabled,
+  onSave,
+}: {
+  skills: NonNullable<ApiUser["skills"]>;
+  disabled: boolean;
+  onSave: (skill: NonNullable<ApiUser["skills"]>[number]) => void;
+}) {
+  const initial = skills[0];
+  const [domain, setDomain] = useState<"HEALTH" | "LOGISTICS" | "SMART_OPERATIONS">(initial?.domain ?? "LOGISTICS");
+  const categories = domain === "HEALTH" ? categoriesByDomain.Health
+    : domain === "SMART_OPERATIONS" ? categoriesByDomain["Smart Operations"]
+      : categoriesByDomain.Logistics;
+  const [category, setCategory] = useState(initial?.category ?? categories[0]);
+  const [skillLevel, setSkillLevel] = useState(initial?.skillLevel ?? 1);
+  const [skillTags, setSkillTags] = useState(initial?.skillTags?.join(", ") ?? "");
+
+  return <form className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-5" onSubmit={(event) => {
+    event.preventDefault();
+    onSave({ domain, category, skillLevel, skillTags: skillTags.split(",").map((tag) => tag.trim()).filter(Boolean) });
+  }}>
+    <select aria-label="Skill domain" value={domain} onChange={(event) => { const nextDomain = event.target.value as typeof domain; setDomain(nextDomain); setCategory(""); }} className={inputClass}><option value="LOGISTICS">Logistics</option><option value="HEALTH">Health</option><option value="SMART_OPERATIONS">Smart operations</option></select>
+    <select aria-label="Skill category" required value={category} onChange={(event) => setCategory(event.target.value)} className={inputClass}><option value="">Select category</option>{categories.map((item) => <option key={item}>{item}</option>)}</select>
+    <select aria-label="Skill level" value={skillLevel} onChange={(event) => setSkillLevel(Number(event.target.value))} className={inputClass}>{[1, 2, 3, 4, 5].map((level) => <option key={level} value={level}>Level {level}</option>)}</select>
+    <input aria-label="Skill tags" value={skillTags} onChange={(event) => setSkillTags(event.target.value)} placeholder="Skill tags, comma-separated" className={inputClass} />
+    <button type="submit" disabled={disabled || !category} className="rounded-lg border border-blue-100 px-3 py-2 text-[10px] font-semibold text-blue-700 disabled:opacity-50">Add / update skill</button>
+  </form>;
 }
 
 function Assignments({ onAction }: { onAction: (message: string) => void }) {
@@ -1154,34 +1272,39 @@ function Assignments({ onAction }: { onAction: (message: string) => void }) {
   return <div className="grid gap-5 xl:grid-cols-[1.3fr_0.8fr]"><Panel title="Assignment recommendations" subtitle="Suggested from sample workload and skill data"><div className="space-y-3">{demoTickets.filter((ticket) => ticket.agent === "Unassigned").map((ticket) => <div key={ticket.id} className="rounded-xl border border-slate-100 p-4"><div className="flex flex-wrap items-center justify-between gap-2"><div><p className="text-xs font-bold text-slate-800">{ticket.id} · {ticket.subject}</p><p className="mt-1 text-[10px] text-slate-500">{ticket.category} · {ticket.priority} priority</p></div><select aria-label={`Assign ${ticket.id}`} value={assigned[ticket.id] ?? ""} onChange={(event) => setAssigned({ ...assigned, [ticket.id]: event.target.value })} className="h-9 rounded-lg border border-slate-200 px-2 text-[10px]"><option value="">Choose agent</option>{agents.map((agent) => <option key={agent.name}>{agent.name}</option>)}</select></div><div className="mt-3 flex items-center justify-between rounded-lg bg-teal-50 px-3 py-2 text-[10px] text-teal-800"><span><Sparkles size={12} className="mr-1 inline" />Recommended: Amara Okafor · balanced load</span><span>46% capacity</span></div><button disabled={!assigned[ticket.id]} onClick={() => onAction(`${ticket.id} assigned to ${assigned[ticket.id]}.`)} className="mt-3 rounded-lg bg-blue-600 px-3 py-2 text-[10px] font-semibold text-white enabled:hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40">Assign ticket</button></div>)}</div></Panel><FairnessPanel /></div>;
 }
 
-function LiveAssignments() {
+function LegacyAssignments() {
   type Recommendation = { agentId: string; name: string; activeTickets: number; urgentTickets: number; skillLevel: number; score: number; reasons: string[] };
+  type AssignmentSettings = { automaticEnabled: boolean; skillWeight: number; workloadWeight: number; similarIssueWeight: number; availabilityWeight: number; slaPerformanceWeight: number };
   const { analytics } = useAnalytics("admin");
   const [tickets, setTickets] = useState<ApiTicket[]>([]);
-  const [agents, setAgents] = useState<Array<{ id: string; fullName: string; isActive: boolean }>>([]);
+  const [agents, setAgents] = useState<Array<{ id: string; fullName: string; isActive: boolean; isAvailable: boolean }>>([]);
+  const [settings, setSettings] = useState<AssignmentSettings | null>(null);
   const [ticketId, setTicketId] = useState("");
   const [agentId, setAgentId] = useState("");
   const [recommendationResult, setRecommendationResult] = useState<{ ticketId: string; items: Recommendation[]; error?: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [assigning, setAssigning] = useState(false);
+  const [settingsSaving, setSettingsSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const assignmentInFlight = useRef(false);
 
   const fetchQueue = useCallback(() => Promise.all([
     apiRequest<{ items: ApiTicket[] }>("/tickets?page=1&limit=100"),
-    apiRequest<{ items: Array<{ id: string; fullName: string; isActive: boolean }> }>("/users?role=AGENT&page=1&limit=100"),
+    apiRequest<{ items: Array<{ id: string; fullName: string; isActive: boolean; isAvailable: boolean }> }>("/users?role=AGENT&page=1&limit=100"),
+    apiRequest<AssignmentSettings>("/assignments/settings"),
   ]), []);
 
   const loadQueue = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const [ticketResult, agentResult] = await fetchQueue();
+      const [ticketResult, agentResult, settingsResult] = await fetchQueue();
       setTickets(ticketResult.items);
-      const activeAgents = agentResult.items.filter((agent) => agent.isActive);
-      setAgents(activeAgents);
+      setAgents(agentResult.items);
+      setSettings(settingsResult);
       setTicketId((current) => ticketResult.items.some((item) => item.id === current) ? current : ticketResult.items[0]?.id ?? "");
+      const activeAgents = agentResult.items.filter((agent) => agent.isActive);
       setAgentId((current) => activeAgents.some((agent) => agent.id === current) ? current : activeAgents[0]?.id ?? "");
     } catch (requestError) {
       setError(errorMessage(requestError));
@@ -1193,12 +1316,13 @@ function LiveAssignments() {
   useEffect(() => {
     let active = true;
     fetchQueue()
-      .then(([ticketResult, agentResult]) => {
+      .then(([ticketResult, agentResult, settingsResult]) => {
         if (!active) return;
         setTickets(ticketResult.items);
-        const activeAgents = agentResult.items.filter((agent) => agent.isActive);
-        setAgents(activeAgents);
+        setAgents(agentResult.items);
+        setSettings(settingsResult);
         setTicketId((current) => ticketResult.items.some((item) => item.id === current) ? current : ticketResult.items[0]?.id ?? "");
+        const activeAgents = agentResult.items.filter((agent) => agent.isActive);
         setAgentId((current) => activeAgents.some((agent) => agent.id === current) ? current : activeAgents[0]?.id ?? "");
       })
       .catch((requestError: unknown) => { if (active) setError(errorMessage(requestError)); })
@@ -1246,15 +1370,253 @@ function LiveAssignments() {
     }
   }
 
+  async function toggleAutomaticAssignment() {
+    if (!settings || settingsSaving) return;
+    setSettingsSaving(true);
+    setError("");
+    setSuccess("");
+    try {
+      const updated = await apiJson<AssignmentSettings>("/assignments/settings", "PATCH", {
+        automaticEnabled: !settings.automaticEnabled,
+      });
+      setSettings(updated);
+      setSuccess(updated.automaticEnabled ? "Automatic assignment enabled; pending tickets were retried." : "Automatic assignment disabled for new tickets.");
+      await loadQueue();
+    } catch (requestError) {
+      setError(errorMessage(requestError));
+    } finally {
+      setSettingsSaving(false);
+    }
+  }
+
   const currentRecommendation = recommendationResult?.ticketId === ticketId ? recommendationResult : null;
   const recommendations = currentRecommendation?.items ?? [];
   const recommending = Boolean(ticketId) && !selectedTicket?.assignedAgent && !currentRecommendation;
+  const unassignedCount = tickets.filter((ticket) => !ticket.assignedAgent).length;
+  const waitingCount = tickets.filter((ticket) => ticket.analysis?.assignmentStatus === "WAITING").length;
+  const failedCount = tickets.filter((ticket) => ticket.analysis?.assignmentStatus === "FAILED").length;
   return <div className="space-y-5">
     {error && <p role="alert" className="rounded-lg bg-rose-50 p-3 text-xs text-rose-700">{error}</p>}
     {success && <p role="status" className="rounded-lg bg-emerald-50 p-3 text-xs text-emerald-700">{success}</p>}
+    <Panel title="Automatic assignment" subtitle="Rule-based analysis uses actual skills, current workload, availability and stored history.">
+      {settings ? <div className="flex flex-wrap items-center justify-between gap-4"><div><p className="text-sm font-bold text-slate-800">{settings.automaticEnabled ? "Enabled" : "Disabled"}</p><p className="mt-1 text-[10px] text-slate-500">Skills {settings.skillWeight}% · workload {settings.workloadWeight}% · similar cases {settings.similarIssueWeight}% · availability {settings.availabilityWeight}% · SLA {settings.slaPerformanceWeight}%</p></div><button type="button" disabled={settingsSaving} onClick={() => void toggleAutomaticAssignment()} className="rounded-lg border border-slate-200 px-3 py-2 text-[10px] font-semibold text-slate-700 disabled:opacity-50">{settingsSaving ? "Saving…" : settings.automaticEnabled ? "Turn off" : "Turn on and retry pending"}</button></div> : <LoadingState label="Loading assignment settings" />}
+      <div className="mt-4 grid gap-3 sm:grid-cols-3"><StatCard label="Unassigned" value={String(unassignedCount)} caption="Current API page" icon={FileText} tone="blue" /><StatCard label="Waiting for skills" value={String(waitingCount)} caption="No eligible agent yet" icon={UsersRound} tone="amber" /><StatCard label="Failed assignments" value={String(failedCount)} caption="Admin review required" icon={ShieldAlert} tone="rose" /></div>
+    </Panel>
     <Panel title="Ticket assignment queue" subtitle="Assign or reassign tickets using current records from the API.">{loading ? <LoadingState label="Loading tickets and agents" /> : tickets.length ? <div className="grid gap-4 sm:grid-cols-2"><label className="block text-xs font-semibold text-slate-700">Ticket<select value={ticketId} onChange={(event) => setTicketId(event.target.value)} className={inputClass}>{tickets.map((ticket) => <option key={ticket.id} value={ticket.id}>{ticket.ticketCode} · {ticket.subject} — {ticket.assignedAgent?.fullName ?? "Unassigned"}</option>)}</select></label>{agents.length ? <label className="block text-xs font-semibold text-slate-700">Agent<select value={agentId} onChange={(event) => setAgentId(event.target.value)} className={inputClass}>{agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.fullName}</option>)}</select></label> : <p role="status" className="self-end text-xs text-slate-500">No active agents are available for assignment.</p>}<div className="sm:col-span-2"><p className="text-[10px] text-slate-500">Current assignment: {selectedTicket?.assignedAgent?.fullName ?? "Unassigned"}</p><button type="button" disabled={!agentId || assigning || selectedTicket?.assignedAgent?.id === agentId} onClick={() => void assign(agentId)} className="mt-3 rounded-lg bg-blue-600 px-3 py-2 text-[10px] font-semibold text-white disabled:opacity-50">{assigning ? "Saving assignment…" : selectedTicket?.assignedAgent ? "Reassign ticket" : "Assign ticket"}</button></div></div> : <p className="text-xs text-slate-500">{agents.length ? "No tickets were returned." : "No active agents are available for assignment."}</p>}</Panel>
     <Panel title="Assignment recommendations" subtitle={selectedTicket ? `${selectedTicket.ticketCode} · Recommendation scores are calculated by the backend.` : "Select an unassigned ticket to load recommendations."}>
       {selectedTicket?.assignedAgent ? <p className="text-xs text-slate-500">This ticket is assigned. Use the assignment controls above to reassign it; recommendations are calculated for unassigned tickets.</p> : currentRecommendation?.error ? <p role="alert" className="text-xs text-rose-700">{currentRecommendation.error}</p> : recommending ? <LoadingState label="Calculating recommendations" /> : recommendations.length ? <div className="space-y-3">{recommendations.map((recommendation) => <article key={recommendation.agentId} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-100 p-4"><div><p className="text-xs font-bold text-slate-800">{recommendation.name} · score {recommendation.score}</p><p className="mt-1 text-[10px] text-slate-500">{recommendation.activeTickets} active · {recommendation.urgentTickets} urgent · skill level {recommendation.skillLevel}</p><p className="mt-1 text-[10px] text-slate-500">{recommendation.reasons.join(" · ")}</p></div><button type="button" disabled={assigning} onClick={() => void assign(recommendation.agentId)} className="rounded-lg bg-blue-600 px-3 py-2 text-[10px] font-semibold text-white disabled:opacity-50">Assign ticket</button></article>)}</div> : !loading && selectedTicket ? <p className="text-xs text-slate-500">No eligible active agents were recommended.</p> : null}
+    </Panel>
+    <FairnessPanel workload={analytics?.agentWorkload ?? []} />
+  </div>;
+}
+
+function LiveAssignments() {
+  type Recommendation = { agentId: string; name: string; activeTickets: number; urgentTickets: number; skillLevel: number; score: number; reasons: string[] };
+  type AssignmentSettings = { automaticEnabled: boolean; skillWeight: number; workloadWeight: number; similarIssueWeight: number; availabilityWeight: number; slaPerformanceWeight: number };
+  type AssignmentHistory = { id: string; source: "AUTOMATIC" | "MANUAL" | "CLAIM"; score: number | null; reason: string | null; createdAt: string; assignedTo: { id: string; fullName: string }; assignedBy: { id: string; fullName: string } | null };
+  type AgentOption = { id: string; fullName: string; isActive: boolean; isAvailable: boolean };
+  const { analytics } = useAnalytics("admin");
+  const [tickets, setTickets] = useState<ApiTicket[]>([]);
+  const [agents, setAgents] = useState<AgentOption[]>([]);
+  const [settings, setSettings] = useState<AssignmentSettings | null>(null);
+  const [weightDraft, setWeightDraft] = useState<AssignmentSettings | null>(null);
+  const [assignmentStats, setAssignmentStats] = useState<AssignmentStats | null>(null);
+  const [ticketId, setTicketId] = useState("");
+  const [agentId, setAgentId] = useState("");
+  const [recommendationResult, setRecommendationResult] = useState<{ ticketId: string; items: Recommendation[]; error?: string } | null>(null);
+  const [historyResult, setHistoryResult] = useState<{ ticketId: string; items: AssignmentHistory[]; error?: string } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const [requestVersion, setRequestVersion] = useState(0);
+
+  const fetchQueue = useCallback(() => Promise.all([
+    apiRequest<{ items: ApiTicket[] }>("/tickets?page=1&limit=100"),
+    apiRequest<{ items: AgentOption[] }>("/users?role=AGENT&page=1&limit=100"),
+    apiRequest<AssignmentSettings>("/assignments/settings"),
+    apiRequest<AssignmentStats>("/assignments/stats"),
+  ]), []);
+
+  const loadQueue = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const [ticketResult, agentResult, settingsResult, statsResult] = await fetchQueue();
+      setTickets(ticketResult.items);
+      setAgents(agentResult.items);
+      setSettings(settingsResult);
+      setWeightDraft(settingsResult);
+      setAssignmentStats(statsResult);
+      setTicketId((current) => ticketResult.items.some((ticket) => ticket.id === current) ? current : ticketResult.items[0]?.id ?? "");
+      setAgentId((current) => agentResult.items.some((agent) => agent.id === current && agent.isActive) ? current : agentResult.items.find((agent) => agent.isActive)?.id ?? "");
+    } catch (requestError) {
+      setError(errorMessage(requestError));
+    } finally {
+      setLoading(false);
+    }
+  }, [fetchQueue]);
+
+  useEffect(() => {
+    let active = true;
+    fetchQueue()
+      .then(([ticketResult, agentResult, settingsResult, statsResult]) => {
+        if (!active) return;
+        setTickets(ticketResult.items);
+        setAgents(agentResult.items);
+        setSettings(settingsResult);
+        setWeightDraft(settingsResult);
+        setAssignmentStats(statsResult);
+        setTicketId((current) => ticketResult.items.some((ticket) => ticket.id === current) ? current : ticketResult.items[0]?.id ?? "");
+        setAgentId((current) => agentResult.items.some((agent) => agent.id === current && agent.isActive) ? current : agentResult.items.find((agent) => agent.isActive)?.id ?? "");
+      })
+      .catch((requestError: unknown) => { if (active) setError(errorMessage(requestError)); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [fetchQueue]);
+  useEffect(() => {
+    const refresh = () => { void loadQueue(); };
+    window.addEventListener(REALTIME_UPDATE_EVENT, refresh);
+    return () => window.removeEventListener(REALTIME_UPDATE_EVENT, refresh);
+  }, [loadQueue]);
+
+  const selectedTicket = tickets.find((ticket) => ticket.id === ticketId);
+  const availableAgents = agents.filter((agent) => agent.isActive);
+  const recommendations = recommendationResult?.ticketId === ticketId ? recommendationResult.items : [];
+  const recommendationError = recommendationResult?.ticketId === ticketId ? recommendationResult.error : "";
+  const recommending = Boolean(ticketId) && !selectedTicket?.assignedAgent && recommendationResult?.ticketId !== ticketId;
+  const history = historyResult?.ticketId === ticketId ? historyResult.items : [];
+  const historyError = historyResult?.ticketId === ticketId ? historyResult.error : "";
+  useEffect(() => {
+    if (!ticketId || selectedTicket?.assignedAgent) return;
+    let active = true;
+    apiRequest<{ recommendations: Recommendation[] }>(`/assignments/tickets/${encodeURIComponent(ticketId)}/recommendations`)
+      .then((result) => { if (active) setRecommendationResult({ ticketId, items: result.recommendations }); })
+      .catch((requestError: unknown) => { if (active) setRecommendationResult({ ticketId, items: [], error: errorMessage(requestError) }); });
+    return () => { active = false; };
+  }, [ticketId, selectedTicket?.assignedAgent, requestVersion]);
+
+  useEffect(() => {
+    if (!ticketId) return;
+    let active = true;
+    apiRequest<AssignmentHistory[]>(`/assignments/tickets/${encodeURIComponent(ticketId)}/history`)
+      .then((items) => { if (active) setHistoryResult({ ticketId, items }); })
+      .catch((requestError: unknown) => { if (active) setHistoryResult({ ticketId, items: [], error: errorMessage(requestError) }); });
+    return () => { active = false; };
+  }, [ticketId, requestVersion]);
+
+  async function assign(agent: string) {
+    if (!ticketId || !agent || saving) return;
+    setSaving(true);
+    setError("");
+    setSuccess("");
+    try {
+      await apiJson(`/assignments/tickets/${encodeURIComponent(ticketId)}/assign`, "POST", { agentId: agent });
+      setSuccess(selectedTicket?.assignedAgent ? "Ticket reassigned by administrator." : "Ticket manually assigned by administrator.");
+      setRequestVersion((version) => version + 1);
+      await loadQueue();
+    } catch (requestError) {
+      setError(errorMessage(requestError));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function toggleAutomatic() {
+    if (!settings || saving) return;
+    setSaving(true);
+    setError("");
+    setSuccess("");
+    try {
+      const updated = await apiJson<AssignmentSettings>("/assignments/settings", "PATCH", { automaticEnabled: !settings.automaticEnabled });
+      setSettings(updated);
+      setWeightDraft(updated);
+      setSuccess(updated.automaticEnabled ? "Automatic assignment enabled and pending tickets retried." : "Automatic assignment disabled.");
+      await loadQueue();
+      setRequestVersion((version) => version + 1);
+    } catch (requestError) {
+      setError(errorMessage(requestError));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveWeights(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!weightDraft || saving) return;
+    const total = weightDraft.skillWeight + weightDraft.workloadWeight + weightDraft.similarIssueWeight
+      + weightDraft.availabilityWeight + weightDraft.slaPerformanceWeight;
+    if (total !== 100) {
+      setError("Assignment weights must total exactly 100.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    setSuccess("");
+    try {
+      const updated = await apiJson<AssignmentSettings>("/assignments/settings", "PATCH", {
+        skillWeight: weightDraft.skillWeight,
+        workloadWeight: weightDraft.workloadWeight,
+        similarIssueWeight: weightDraft.similarIssueWeight,
+        availabilityWeight: weightDraft.availabilityWeight,
+        slaPerformanceWeight: weightDraft.slaPerformanceWeight,
+      });
+      setSettings(updated);
+      setWeightDraft(updated);
+      setSuccess("Matching weights saved.");
+    } catch (requestError) {
+      setError(errorMessage(requestError));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function retry() {
+    if (!selectedTicket || selectedTicket.assignedAgent || saving) return;
+    setSaving(true);
+    setError("");
+    setSuccess("");
+    try {
+      const result = await apiJson<{ status: string }>(`/assignments/tickets/${encodeURIComponent(ticketId)}/retry`, "POST", {});
+      setSuccess(result.status === "ASSIGNED" ? "Ticket automatically assigned." : "No eligible agent found; the ticket remains in the queue.");
+      await loadQueue();
+      setRequestVersion((version) => version + 1);
+    } catch (requestError) {
+      setError(errorMessage(requestError));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const unassignedCount = tickets.filter((ticket) => !ticket.assignedAgent).length;
+  const waitingCount = tickets.filter((ticket) => ticket.analysis?.assignmentStatus === "WAITING").length;
+  const failedCount = tickets.filter((ticket) => ticket.analysis?.assignmentStatus === "FAILED").length;
+  return <div className="space-y-5">
+    {error && <p role="alert" className="rounded-lg bg-rose-50 p-3 text-xs text-rose-700">{error}</p>}
+    {success && <p role="status" className="rounded-lg bg-emerald-50 p-3 text-xs text-emerald-700">{success}</p>}
+    <Panel title="Automatic assignment" subtitle="Rules-based classification and weighted matching. No external AI provider is configured.">
+      {settings ? <div className="flex flex-wrap items-center justify-between gap-4"><div><p className="text-sm font-bold text-slate-800">{settings.automaticEnabled ? "Enabled" : "Disabled"}</p><p className="mt-1 text-[10px] text-slate-500">Skills {settings.skillWeight}% · workload {settings.workloadWeight}% · similar cases {settings.similarIssueWeight}% · availability {settings.availabilityWeight}% · SLA {settings.slaPerformanceWeight}%</p></div><button type="button" disabled={saving} onClick={() => void toggleAutomatic()} className="rounded-lg border border-slate-200 px-3 py-2 text-[10px] font-semibold text-slate-700 disabled:opacity-50">{saving ? "Saving…" : settings.automaticEnabled ? "Turn off" : "Turn on and retry pending"}</button></div> : <LoadingState label="Loading assignment settings" />}
+      {weightDraft && <form onSubmit={saveWeights} className="mt-4 grid gap-3 sm:grid-cols-3 lg:grid-cols-5">{([
+        ["skillWeight", "Skills"],
+        ["workloadWeight", "Workload"],
+        ["similarIssueWeight", "Similar issues"],
+        ["availabilityWeight", "Availability"],
+        ["slaPerformanceWeight", "SLA performance"],
+      ] as const).map(([field, label]) => <label key={field} className="text-[10px] font-semibold text-slate-600">{label} %<input type="number" min={0} max={100} value={weightDraft[field]} onChange={(event) => setWeightDraft({ ...weightDraft, [field]: Number(event.target.value) })} className={inputClass} /></label>)}<button type="submit" disabled={saving} className="rounded-lg bg-blue-600 px-3 py-2 text-[10px] font-semibold text-white disabled:opacity-50 sm:col-span-3 lg:col-span-5">{saving ? "Saving…" : "Save weights (must total 100%)"}</button></form>}
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5"><StatCard label="Auto-assigned" value={String(assignmentStats?.automaticallyAssigned ?? "—")} caption={`${assignmentStats?.analysedTickets ?? 0} analyzed tickets`} icon={CheckCircle2} tone="teal" /><StatCard label="Assignment rate" value={assignmentStats?.automaticAssignmentRatePercent === null || assignmentStats?.automaticAssignmentRatePercent === undefined ? "Insufficient data" : `${assignmentStats.automaticAssignmentRatePercent}%`} caption="Automatic assignments / analyses" icon={Activity} tone="blue" /><StatCard label="Unassigned" value={String(unassignedCount)} caption="Current API page" icon={FileText} tone="blue" /><StatCard label="Waiting for skills" value={String(assignmentStats?.waiting ?? waitingCount)} caption="No eligible agent currently available" icon={UsersRound} tone="amber" /><StatCard label="Assignment failures" value={String(assignmentStats?.failed ?? failedCount)} caption="Admin attention required" icon={ShieldAlert} tone="rose" /></div>
+    </Panel>
+    <Panel title="Admin assignment queue" subtitle="Review automated decisions; manual assignment is an administrator override.">
+      {loading ? <LoadingState label="Loading ticket queue" /> : tickets.length ? <div className="grid gap-4 sm:grid-cols-2">
+        <label className="block text-xs font-semibold text-slate-700">Ticket<select value={ticketId} onChange={(event) => setTicketId(event.target.value)} className={inputClass}>{tickets.map((ticket) => <option key={ticket.id} value={ticket.id}>{ticket.ticketCode} · {ticket.subject} — {ticket.assignedAgent?.fullName ?? ticket.analysis?.assignmentStatus ?? "Unassigned"}</option>)}</select></label>
+        <label className="block text-xs font-semibold text-slate-700">Agent for manual override<select value={agentId} onChange={(event) => setAgentId(event.target.value)} className={inputClass}><option value="">Choose active agent</option>{availableAgents.map((agent) => <option key={agent.id} value={agent.id}>{agent.fullName} · {agent.isAvailable ? "Available" : "Unavailable"}</option>)}</select></label>
+        <div className="sm:col-span-2 flex flex-wrap items-center gap-2"><span className="mr-auto text-[10px] text-slate-500">Current assignment: {selectedTicket?.assignedAgent?.fullName ?? "Unassigned"} · {selectedTicket?.analysis?.assignmentStatus ?? "No analysis"}</span><button type="button" disabled={!selectedTicket || Boolean(selectedTicket.assignedAgent) || saving} onClick={() => void retry()} className="rounded-lg border border-slate-200 px-3 py-2 text-[10px] font-semibold text-slate-700 disabled:opacity-50">Retry automatic assignment</button><button type="button" disabled={!agentId || saving || selectedTicket?.assignedAgent?.id === agentId} onClick={() => void assign(agentId)} className="rounded-lg bg-blue-600 px-3 py-2 text-[10px] font-semibold text-white disabled:opacity-50">{saving ? "Saving…" : selectedTicket?.assignedAgent ? "Manual reassign" : "Manual assign"}</button></div>
+      </div> : <p className="text-xs text-slate-500">No tickets were returned by the API.</p>}
+    </Panel>
+    <Panel title="Matching recommendations" subtitle={selectedTicket ? `${selectedTicket.ticketCode} · Only active, available agents with the exact domain/category skill are eligible.` : "Select an unassigned ticket."}>
+      {selectedTicket?.assignedAgent ? <p className="text-xs text-slate-500">This ticket is already assigned. Use the admin override above if necessary.</p> : recommendationError ? <p role="alert" className="text-xs text-rose-700">{recommendationError}</p> : recommending ? <LoadingState label="Calculating recommendations" /> : recommendations.length ? <div className="space-y-3">{recommendations.map((recommendation) => <article key={recommendation.agentId} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-100 p-4"><div><p className="text-xs font-bold text-slate-800">{recommendation.name} · score {recommendation.score}/100</p><p className="mt-1 text-[10px] text-slate-500">{recommendation.activeTickets} active · {recommendation.urgentTickets} urgent · matching skill level {recommendation.skillLevel}/5</p><p className="mt-1 text-[10px] text-slate-500">{recommendation.reasons.join(" · ")}</p></div><button type="button" disabled={saving} onClick={() => void assign(recommendation.agentId)} className="rounded-lg bg-blue-600 px-3 py-2 text-[10px] font-semibold text-white disabled:opacity-50">Manual override</button></article>)}</div> : selectedTicket && !selectedTicket.assignedAgent ? <p className="text-xs text-slate-500">No eligible agent recommendations are available.</p> : null}
+    </Panel>
+    <Panel title="Assignment history" subtitle="The audit record includes the source, score, reason and administrator where applicable.">
+      {historyError ? <p role="alert" className="text-xs text-rose-700">{historyError}</p> : history.length ? <ul className="space-y-2">{history.map((item) => <li key={item.id} className="rounded-lg bg-slate-50 p-3 text-[10px] text-slate-600"><p className="font-semibold text-slate-800">{item.assignedTo.fullName} · {item.source}{item.score === null ? "" : ` · score ${item.score}`}</p><p className="mt-1">{item.reason ?? "No assignment reason recorded."}</p><p className="mt-1 text-slate-400">{item.assignedBy ? `By ${item.assignedBy.fullName} · ` : "System · "}{new Date(item.createdAt).toLocaleString()}</p></li>)}</ul> : <p className="text-xs text-slate-500">No assignment history is available for this ticket.</p>}
     </Panel>
     <FairnessPanel workload={analytics?.agentWorkload ?? []} />
   </div>;

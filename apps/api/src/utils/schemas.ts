@@ -43,6 +43,7 @@ export const provisionAgentSchema = z.object({
     domain,
     category: z.string().trim().min(2).max(100),
     skillLevel: z.number().int().min(1).max(5).default(1),
+    skillTags: z.array(z.string().trim().min(1).max(60)).max(30).default([]),
   }).strict()).max(50).default([]),
 }).strict();
 
@@ -160,6 +161,29 @@ export const userListQuerySchema = z.object({
 export const userStatusSchema = z.object({
   isActive: z.boolean(),
 }).strict();
+
+export const agentAvailabilitySchema = z.object({
+  isAvailable: z.boolean(),
+}).strict();
+
+export const agentAssignmentProfileSchema = z.object({
+  isAvailable: z.boolean().optional(),
+  skills: z.array(z.object({
+    domain,
+    category: z.string().trim().min(2).max(100),
+    skillLevel: z.number().int().min(1).max(5),
+    skillTags: z.array(z.string().trim().min(1).max(60)).max(30).default([]),
+  }).strict()).max(50).optional(),
+}).strict().refine((value) => Object.keys(value).length > 0, "Provide availability or skills to update.");
+
+export const assignmentSettingsSchema = z.object({
+  automaticEnabled: z.boolean().optional(),
+  skillWeight: z.number().int().min(0).max(100).optional(),
+  workloadWeight: z.number().int().min(0).max(100).optional(),
+  similarIssueWeight: z.number().int().min(0).max(100).optional(),
+  availabilityWeight: z.number().int().min(0).max(100).optional(),
+  slaPerformanceWeight: z.number().int().min(0).max(100).optional(),
+}).strict().refine((value) => Object.keys(value).length > 0, "Provide at least one setting to update.");
 
 export const ticketFeedbackParamsSchema = z.object({ ticketId: uuid }).strict();
 

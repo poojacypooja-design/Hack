@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { TicketPriority } from "@prisma/client";
+import { DomainMode, TicketPriority } from "@prisma/client";
 import { getPublicUser } from "../src/utils/api-response.js";
 import { hashPassword, verifyPassword } from "../src/utils/password.js";
 
@@ -11,6 +11,8 @@ if (!process.env.DATABASE_URL) {
 const { ticketTextSimilarity, normalizeTicketText } = await import("../src/services/issue-dna.service.js");
 const { calculateSlaRisk } = await import("../src/services/sla.service.js");
 const { calculateCsatSummary } = await import("../src/services/analytics.service.js");
+const { analyzeTicketContent } = await import("../src/services/ticket-analysis.service.js");
+const { scoreAssignmentCandidate } = await import("../src/services/intelligent-assignment.service.js");
 const { feedbackSchema, loginSchema, registerSchema } = await import("../src/utils/schemas.js");
 const { parseEnvironmentSettings, parseSeedAdminSettings } = await import("../src/config/env.js");
 
@@ -66,6 +68,47 @@ test("CSAT counts only 4- and 5-star responses as positive", () => {
     { rating: 5, count: 4 },
   ]), { feedbackCount: 10, positiveCount: 7, csatPercent: 70 });
   assert.deepEqual(calculateCsatSummary([]), { feedbackCount: 0, positiveCount: 0, csatPercent: null });
+});
+
+test("rule-based ticket analysis detects payment impact without lowering submitted priority", () => {
+  const analysis = analyzeTicketContent({
+    subject: "Payment deducted but booking is not confirmed",
+    description: "My payment was deducted and the booking remains unconfirmed.",
+    category: "Billing",
+    domain: DomainMode.LOGISTICS,
+    priority: TicketPriority.MEDIUM,
+  }, ["resolved-ticket-1"]);
+
+  assert.equal(analysis.analysisMethod, "RULE_BASED");
+  assert.equal(analysis.problemCategory, "Billing / Payment");
+  assert.equal(analysis.recommendedPriority, TicketPriority.HIGH);
+  assert.equal(analysis.complexity, "HIGH");
+  assert.ok(analysis.requiredSkills.includes("Payment troubleshooting"));
+  assert.deepEqual(analysis.similarTicketIds, ["resolved-ticket-1"]);
+});
+
+test("assignment score prefers a better-balanced agent and omits unavailable history dimensions", () => {
+  const base = {
+    skillLevel: 4,
+    skillTags: ["Billing"],
+    requiredSkills: ["Billing"],
+    urgentTickets: 0,
+    similarTickets: 0,
+    maximumSimilarTickets: 0,
+    slaCompliance: null,
+    available: true,
+    weights: {
+      skillWeight: 35,
+      workloadWeight: 25,
+      similarIssueWeight: 15,
+      availabilityWeight: 15,
+      slaPerformanceWeight: 10,
+    },
+  };
+  const balanced = scoreAssignmentCandidate({ ...base, activeTickets: 1 });
+  const overloaded = scoreAssignmentCandidate({ ...base, activeTickets: 8 });
+  assert.ok(balanced.score > overloaded.score);
+  assert.equal(balanced.similarScore, null);
 });
 
 test("feedback requires every rating to be between one and five", () => {

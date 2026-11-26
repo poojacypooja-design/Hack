@@ -17,6 +17,8 @@ import {
 import { ApiError } from "../utils/api-response.js";
 import { generateTicketId } from "../utils/generate-ticket-id.js";
 import { createNotification, notifyAdministrators } from "./notification.service.js";
+import { analyzeTicket } from "./ticket-analysis.service.js";
+import { assignAutomatically } from "./intelligent-assignment.service.js";
 import {
   activeTicketStatuses,
   assertTicketAccess,
@@ -52,9 +54,10 @@ export async function createTicket(actor: TicketActor, input: CreateTicketInput)
     throw new ApiError(403, "CUSTOMER_ACCOUNT_REQUIRED", "Only customer accounts can submit a ticket.");
   }
   assertCategory(input.domain, input.category);
+  const analysis = await analyzeTicket(input);
   const created = await prisma.$transaction(async (transaction) => {
     const policy = await transaction.sLAPolicy.findUnique({
-      where: { domain_priority: { domain: input.domain, priority: input.priority } },
+      where: { domain_priority: { domain: input.domain, priority: analysis.recommendedPriority } },
     });
     if (!policy?.isActive) {
       throw new ApiError(503, "SLA_POLICY_UNAVAILABLE", "No active SLA policy is configured for this ticket.");
@@ -66,8 +69,25 @@ export async function createTicket(actor: TicketActor, input: CreateTicketInput)
         description: input.description,
         category: input.category,
         domain: input.domain,
-        priority: input.priority,
+        priority: analysis.recommendedPriority,
         customerId: actor.userId,
+      },
+    });
+    await transaction.ticketAnalysis.create({
+      data: {
+        ticketId: ticket.id,
+        problemCategory: analysis.problemCategory,
+        subcategory: analysis.subcategory,
+        reportedProblem: analysis.reportedProblem,
+        keywords: analysis.keywords,
+        requiredSkills: analysis.requiredSkills,
+        complexity: analysis.complexity,
+        recommendedPriority: analysis.recommendedPriority,
+        suggestedTeam: analysis.suggestedTeam,
+        resolutionApproach: analysis.resolutionApproach,
+        potentialSlaRisk: analysis.potentialSlaRisk,
+        analysisMethod: analysis.analysisMethod,
+        similarTicketIds: analysis.similarTicketIds,
       },
     });
     const now = ticket.createdAt;
@@ -90,6 +110,7 @@ export async function createTicket(actor: TicketActor, input: CreateTicketInput)
     return ticket;
   });
 
+  await assignAutomatically(created.id);
   const notice = {
     ticketId: created.id,
     type: NotificationType.TICKET_CREATED,
@@ -155,6 +176,16 @@ export async function listTickets(actor: TicketActor, query: ListTicketsQuery) {
             policy: { select: { firstResponseMinutes: true, resolutionMinutes: true } },
           },
         },
+        analysis: actor.role === UserRole.CUSTOMER
+          ? {
+            select: {
+              problemCategory: true,
+              subcategory: true,
+              recommendedPriority: true,
+              assignmentStatus: true,
+            },
+          }
+          : true,
         _count: { select: { messages: true, attachments: true } },
       },
     }),
@@ -198,13 +229,25 @@ export async function getTicketDetails(ticketId: string, actor: TicketActor) {
         orderBy: { createdAt: "asc" },
         select: { id: true, originalName: true, mimeType: true, sizeBytes: true, createdAt: true },
       },
-      assignments: {
-        orderBy: { createdAt: "asc" },
-        include: {
-          assignedTo: { select: { id: true, fullName: true } },
-          assignedBy: { select: { id: true, fullName: true } },
+      ...(actor.role === UserRole.CUSTOMER ? {
+        analysis: {
+          select: {
+            problemCategory: true,
+            subcategory: true,
+            recommendedPriority: true,
+            assignmentStatus: true,
+          },
         },
-      },
+      } : {
+        assignments: {
+          orderBy: { createdAt: "asc" },
+          include: {
+            assignedTo: { select: { id: true, fullName: true } },
+            assignedBy: { select: { id: true, fullName: true } },
+          },
+        },
+        analysis: true,
+      }),
       history: {
         where: actor.role === UserRole.CUSTOMER ? { action: { not: TicketHistoryAction.INTERNAL_NOTE } } : {},
         orderBy: { createdAt: "asc" },
@@ -226,6 +269,16 @@ export async function getTicketDetails(ticketId: string, actor: TicketActor) {
     },
   });
   if (!ticket) throw new ApiError(404, "TICKET_NOT_FOUND", "The ticket was not found.");
+  if (actor.role === UserRole.CUSTOMER) {
+    return {
+      ...ticket,
+      history: ticket.history.map((entry) => (
+        entry.action === TicketHistoryAction.ASSIGNED || entry.action === TicketHistoryAction.REASSIGNED
+          ? { ...entry, metadata: null, actor: null }
+          : entry
+      )),
+    };
+  }
   return ticket;
 }
 

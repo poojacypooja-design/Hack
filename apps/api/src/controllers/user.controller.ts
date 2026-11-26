@@ -2,10 +2,24 @@ import type { RequestHandler } from "express";
 import { UserRole } from "@prisma/client";
 import { prisma } from "../config/database.js";
 import { getValidated } from "../middleware/validation.middleware.js";
-import { listUsers, provisionAgent, setUserActive } from "../services/user.service.js";
+import {
+  listUsers,
+  provisionAgent,
+  setAgentAvailability,
+  setUserActive,
+  updateAgentAssignmentProfile,
+} from "../services/user.service.js";
 import { ApiError, getPublicUser, success } from "../utils/api-response.js";
 import type { z } from "zod";
-import { paginationQuerySchema, userListQuerySchema, userParamsSchema, userStatusSchema, provisionAgentSchema } from "../utils/schemas.js";
+import {
+  agentAssignmentProfileSchema,
+  agentAvailabilitySchema,
+  paginationQuerySchema,
+  userListQuerySchema,
+  userParamsSchema,
+  userStatusSchema,
+  provisionAgentSchema,
+} from "../utils/schemas.js";
 
 export const list: RequestHandler = async (_request, response) => {
   const query = getValidated<z.infer<typeof userListQuerySchema>>(response, "query");
@@ -30,8 +44,9 @@ export const detail: RequestHandler = async (_request, response) => {
       company: true,
       preferredDomain: true,
       isActive: true,
+      isAvailable: true,
       createdAt: true,
-      skills: { select: { domain: true, category: true, skillLevel: true } },
+      skills: { select: { domain: true, category: true, skillLevel: true, skillTags: true } },
       _count: { select: { customerTickets: true, assignedTickets: true } },
     },
   });
@@ -54,6 +69,18 @@ export const updateStatus: RequestHandler = async (request, response) => {
     throw new ApiError(400, "SELF_DEACTIVATION_NOT_ALLOWED", "Administrators cannot deactivate their own account.");
   }
   return success(response, { user: await setUserActive(userId, isActive) });
+};
+
+export const updateAvailability: RequestHandler = async (request, response) => {
+  const { isAvailable } = getValidated<z.infer<typeof agentAvailabilitySchema>>(response, "body");
+  if (!request.auth) throw new ApiError(401, "AUTHENTICATION_REQUIRED", "Please sign in to continue.");
+  return success(response, { user: await setAgentAvailability(request.auth.userId, isAvailable) });
+};
+
+export const updateAssignmentProfile: RequestHandler = async (request, response) => {
+  const { userId } = getValidated<z.infer<typeof userParamsSchema>>(response, "params");
+  const input = getValidated<z.infer<typeof agentAssignmentProfileSchema>>(response, "body");
+  return success(response, { user: await updateAgentAssignmentProfile(userId, input) });
 };
 
 export const publicUser = getPublicUser;

@@ -45,6 +45,7 @@ enum NotificationType {
   RESOLUTION
   NO_SILENCE
   CUSTOMER_FEEDBACK
+  ASSIGNMENT_FAILED
 }
 
 enum TicketHistoryAction {
@@ -66,6 +67,32 @@ enum IncidentStatus {
   RESOLVED
 }
 
+enum TicketComplexity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum TicketAnalysisMethod {
+  RULE_BASED
+  AI_PROVIDER
+}
+
+enum AssignmentSource {
+  AUTOMATIC
+  MANUAL
+  CLAIM
+}
+
+enum AssignmentStatus {
+  PENDING
+  ASSIGNED
+  WAITING
+  DISABLED
+  FAILED
+}
+
 model User {
   id                    String               @id @default(uuid()) @db.Uuid
   email                 String               @unique @db.VarChar(320)
@@ -76,6 +103,7 @@ model User {
   company               String?              @db.VarChar(160)
   preferredDomain       DomainMode?
   isActive              Boolean              @default(true)
+  isAvailable           Boolean              @default(true)
   createdAt             DateTime             @default(now())
   updatedAt             DateTime             @updatedAt
   sessions              Session[]
@@ -134,6 +162,7 @@ model Ticket {
   assignments       TicketAssignment[]
   slaRecord         SLARecord?
   feedback          TicketFeedback?
+  analysis          TicketAnalysis?
   history           TicketHistory[]
   notifications     Notification[]
   incidentLinks     TicketIncidentLink[]
@@ -191,13 +220,16 @@ model TicketAssignment {
   id             String   @id @default(uuid()) @db.Uuid
   ticketId       String   @db.Uuid
   assignedToId   String   @db.Uuid
-  assignedById   String   @db.Uuid
+  assignedById   String?  @db.Uuid
   previousAgentId String? @db.Uuid
   note           String?  @db.VarChar(500)
+  score          Float?
+  reason         String?  @db.VarChar(1000)
+  source         AssignmentSource @default(MANUAL)
   createdAt      DateTime @default(now())
   ticket         Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
   assignedTo     User     @relation("AssignedAgent", fields: [assignedToId], references: [id], onDelete: Restrict)
-  assignedBy     User     @relation("AssignmentActor", fields: [assignedById], references: [id], onDelete: Restrict)
+  assignedBy     User?    @relation("AssignmentActor", fields: [assignedById], references: [id], onDelete: SetNull)
   previousAgent  User?    @relation("PreviousAgent", fields: [previousAgentId], references: [id], onDelete: SetNull)
 
   @@index([ticketId, createdAt])
@@ -297,11 +329,49 @@ model AgentSkill {
   domain     DomainMode
   category   String     @db.VarChar(100)
   skillLevel Int        @default(1)
+  skillTags  String[]   @default([])
   createdAt  DateTime   @default(now())
   user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, domain, category])
   @@index([domain, category, skillLevel])
+}
+
+model TicketAnalysis {
+  id                 String               @id @default(uuid()) @db.Uuid
+  ticketId           String               @unique @db.Uuid
+  problemCategory    String               @db.VarChar(100)
+  subcategory        String?              @db.VarChar(100)
+  reportedProblem    String               @db.Text
+  keywords           String[]             @default([])
+  requiredSkills     String[]             @default([])
+  complexity         TicketComplexity
+  recommendedPriority TicketPriority
+  suggestedTeam      String?              @db.VarChar(120)
+  resolutionApproach String?              @db.Text
+  potentialSlaRisk   String?              @db.VarChar(20)
+  analysisMethod     TicketAnalysisMethod @default(RULE_BASED)
+  similarTicketIds   String[]             @default([])
+  assignmentStatus   AssignmentStatus     @default(PENDING)
+  assignmentReason   String?              @db.VarChar(1000)
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  ticket             Ticket               @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@index([assignmentStatus, createdAt])
+  @@index([problemCategory, complexity])
+}
+
+model AssignmentSettings {
+  id                    String   @id @default("global") @db.VarChar(20)
+  automaticEnabled      Boolean  @default(true)
+  skillWeight           Int      @default(35)
+  workloadWeight        Int      @default(25)
+  similarIssueWeight    Int      @default(15)
+  availabilityWeight    Int      @default(15)
+  slaPerformanceWeight  Int      @default(10)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
 }
 
 model TicketIncidentGroup {

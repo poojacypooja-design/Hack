@@ -106,6 +106,13 @@ export type ApiUser = {
   company: string | null;
   preferredDomain: "HEALTH" | "LOGISTICS" | "SMART_OPERATIONS" | null;
   isActive?: boolean;
+  isAvailable?: boolean;
+  skills?: Array<{
+    domain: "HEALTH" | "LOGISTICS" | "SMART_OPERATIONS";
+    category: string;
+    skillLevel: number;
+    skillTags?: string[];
+  }>;
   createdAt: string;
 };
 
@@ -118,6 +125,19 @@ export type ApiTicket = {
   domain: "HEALTH" | "LOGISTICS" | "SMART_OPERATIONS";
   priority: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
   status: "OPEN" | "IN_PROGRESS" | "WAITING_FOR_CUSTOMER" | "RESOLVED" | "CLOSED";
+  analysis?: {
+    problemCategory: string;
+    subcategory: string | null;
+    recommendedPriority: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+    assignmentStatus: "PENDING" | "ASSIGNED" | "WAITING" | "DISABLED" | "FAILED";
+    complexity?: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+    potentialSlaRisk?: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+    requiredSkills?: string[];
+    suggestedTeam?: string | null;
+    resolutionApproach?: string | null;
+    analysisMethod?: "RULE_BASED" | "AI_PROVIDER";
+    assignmentReason?: string | null;
+  } | null;
   customer: { id: string; fullName: string; email?: string; company?: string | null };
   assignedAgent: { id: string; fullName: string; email?: string } | null;
   createdAt: string;

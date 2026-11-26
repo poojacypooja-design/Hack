@@ -25,6 +25,7 @@ export function getPublicUser(user: {
   company: string | null;
   preferredDomain: string | null;
   isActive?: boolean;
+  isAvailable?: boolean;
   createdAt: Date;
 }) {
   return {
@@ -36,6 +37,7 @@ export function getPublicUser(user: {
     company: user.company,
     preferredDomain: user.preferredDomain,
     ...(user.isActive === undefined ? {} : { isActive: user.isActive }),
+    ...(user.isAvailable === undefined ? {} : { isAvailable: user.isAvailable }),
     createdAt: user.createdAt,
   };
 }

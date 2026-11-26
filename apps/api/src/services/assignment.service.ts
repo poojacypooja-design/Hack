@@ -4,6 +4,8 @@ import {
   TicketPriority,
   TicketStatus,
   UserRole,
+  AssignmentSource,
+  AssignmentStatus,
 } from "@prisma/client";
 import { prisma } from "../config/database.js";
 import { ApiError } from "../utils/api-response.js";
@@ -15,7 +17,7 @@ import {
 } from "../sockets/realtime.js";
 import { createNotification } from "./notification.service.js";
 import { assertTicketAccess, type TicketActor } from "./ticket-access.service.js";
-import { recommendAgents } from "./fairness.service.js";
+import { assignmentRecommendations as getIntelligentRecommendations } from "./intelligent-assignment.service.js";
 
 type AssignInput = { agentId: string; note?: string };
 
@@ -37,10 +39,13 @@ export async function assignTicket(ticketId: string, actor: TicketActor, input: 
   const previousAgentId = ticket.assignedAgentId;
   const action = previousAgentId ? TicketHistoryAction.REASSIGNED : TicketHistoryAction.ASSIGNED;
   const updated = await prisma.$transaction(async (transaction) => {
-    const changed = await transaction.ticket.update({
-      where: { id: ticketId },
+    const changed = await transaction.ticket.updateMany({
+      where: { id: ticketId, assignedAgentId: previousAgentId },
       data: { assignedAgentId: agent.id },
     });
+    if (!changed.count) {
+      throw new ApiError(409, "TICKET_ASSIGNMENT_CHANGED", "The ticket assignment changed. Refresh and try again.");
+    }
     await transaction.ticketAssignment.create({
       data: {
         ticketId,
@@ -48,6 +53,15 @@ export async function assignTicket(ticketId: string, actor: TicketActor, input: 
         assignedById: actor.userId,
         previousAgentId,
         note: input.note,
+        reason: input.note ? `Administrator override: ${input.note}` : "Manually assigned by an administrator.",
+        source: AssignmentSource.MANUAL,
+      },
+    });
+    await transaction.ticketAnalysis.updateMany({
+      where: { ticketId },
+      data: {
+        assignmentStatus: AssignmentStatus.ASSIGNED,
+        assignmentReason: input.note ? `Administrator override: ${input.note}` : "Manually assigned by an administrator.",
       },
     });
     await transaction.ticketHistory.create({
@@ -58,7 +72,7 @@ export async function assignTicket(ticketId: string, actor: TicketActor, input: 
         metadata: { fromAgentId: previousAgentId, toAgentId: agent.id, note: input.note },
       },
     });
-    return changed;
+    return transaction.ticket.findUniqueOrThrow({ where: { id: ticketId } });
   });
 
   const reassigned = Boolean(previousAgentId);
@@ -106,7 +120,18 @@ export async function claimTicket(ticketId: string, actor: TicketActor) {
     });
     if (!result.count) throw new ApiError(409, "TICKET_ALREADY_ASSIGNED", "Another agent has already claimed this ticket.");
     await transaction.ticketAssignment.create({
-      data: { ticketId, assignedToId: actor.userId, assignedById: actor.userId, note: "Claimed from authorized queue." },
+      data: {
+        ticketId,
+        assignedToId: actor.userId,
+        assignedById: actor.userId,
+        note: "Claimed from authorized queue.",
+        source: AssignmentSource.CLAIM,
+        reason: "Claimed by an authorized agent.",
+      },
+    });
+    await transaction.ticketAnalysis.updateMany({
+      where: { ticketId },
+      data: { assignmentStatus: AssignmentStatus.ASSIGNED, assignmentReason: "Claimed by an authorized agent." },
     });
     await transaction.ticketHistory.create({
       data: { ticketId, actorId: actor.userId, action: TicketHistoryAction.ASSIGNED, metadata: { claimed: true } },
@@ -206,5 +231,5 @@ export async function escalateTicket(ticketId: string, actor: TicketActor, note:
 }
 
 export async function assignmentRecommendations(ticketId: string, actor: TicketActor) {
-  return recommendAgents({ ticketId, actor });
+  return getIntelligentRecommendations(ticketId, actor);
 }

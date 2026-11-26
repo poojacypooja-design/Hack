@@ -3,6 +3,7 @@ import { prisma } from "../config/database.js";
 import { ApiError, getPublicUser } from "../utils/api-response.js";
 import { hashPassword } from "../utils/password.js";
 import { disconnectUser } from "../sockets/realtime.js";
+import { retryPendingAssignments } from "./intelligent-assignment.service.js";
 
 export async function listUsers(page: number, limit: number, role?: UserRole, search?: string) {
   const where: Prisma.UserWhereInput = {
@@ -29,6 +30,8 @@ export async function listUsers(page: number, limit: number, role?: UserRole, se
         company: true,
         preferredDomain: true,
         isActive: true,
+        isAvailable: true,
+        skills: { select: { domain: true, category: true, skillLevel: true, skillTags: true } },
         createdAt: true,
         _count: { select: { customerTickets: true, assignedTickets: true } },
       },
@@ -42,7 +45,7 @@ export async function provisionAgent(input: {
   fullName: string;
   email: string;
   password: string;
-  skills: { domain: "HEALTH" | "LOGISTICS" | "SMART_OPERATIONS"; category: string; skillLevel: number }[];
+  skills: { domain: "HEALTH" | "LOGISTICS" | "SMART_OPERATIONS"; category: string; skillLevel: number; skillTags: string[] }[];
 }) {
   const passwordHash = await hashPassword(input.password);
   const agent = await prisma.user.create({
@@ -56,6 +59,7 @@ export async function provisionAgent(input: {
       },
     },
   });
+  await retryPendingAssignments();
   return getPublicUser(agent);
 }
 
@@ -70,5 +74,43 @@ export async function setUserActive(userId: string, isActive: boolean) {
     },
   });
   if (!isActive) disconnectUser(userId);
+  if (isActive && user.role === UserRole.AGENT) await retryPendingAssignments();
+  return getPublicUser(updated);
+}
+
+export async function setAgentAvailability(userId: string, isAvailable: boolean) {
+  const agent = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, role: true } });
+  if (!agent || agent.role !== UserRole.AGENT) {
+    throw new ApiError(404, "AGENT_NOT_FOUND", "The agent account was not found.");
+  }
+  const updated = await prisma.user.update({ where: { id: userId }, data: { isAvailable } });
+  if (isAvailable) await retryPendingAssignments();
+  return getPublicUser(updated);
+}
+
+export async function updateAgentAssignmentProfile(
+  userId: string,
+  input: {
+    isAvailable?: boolean;
+    skills?: { domain: "HEALTH" | "LOGISTICS" | "SMART_OPERATIONS"; category: string; skillLevel: number; skillTags: string[] }[];
+  },
+) {
+  const agent = await prisma.user.findUnique({ where: { id: userId }, select: { role: true } });
+  if (!agent || agent.role !== UserRole.AGENT) {
+    throw new ApiError(404, "AGENT_NOT_FOUND", "The agent account was not found.");
+  }
+  const updated = await prisma.$transaction(async (transaction) => {
+    if (input.skills) {
+      await transaction.agentSkill.deleteMany({ where: { userId } });
+      await transaction.agentSkill.createMany({
+        data: input.skills.map((skill) => ({ ...skill, userId })),
+      });
+    }
+    return transaction.user.update({
+      where: { id: userId },
+      data: input.isAvailable === undefined ? {} : { isAvailable: input.isAvailable },
+    });
+  });
+  await retryPendingAssignments();
   return getPublicUser(updated);
 }
